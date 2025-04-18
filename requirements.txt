@@ -1,0 +1,5 @@
+uvicorn
+mcp
+fastmcp
+httpx
+boto3
