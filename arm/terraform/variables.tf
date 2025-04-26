@@ -4,6 +4,12 @@ variable "aws_region" {
   default     = "ap-northeast-2" # Default is seoul, or your preferred region
 }
 
+variable "lambda_layer_name" {
+  description = "Name for the Lambda layer"
+  type        = string
+  default     = "arm-analyzer-python-deps"
+}
+
 variable "lambda_function_name" {
   description = "Name for the Lambda function"
   type        = string
@@ -44,12 +50,6 @@ variable "lambda_architecture" {
   description = "Lambda function architecture (x86_64 or arm64)"
   type        = string
   default     = "arm64" # Run the analyzer itself on arm64
-}
-
-variable "lambda_zip_path" {
-  description = "Path to the deployment package zip file"
-  type        = string
-  default     = "../deployment_package.zip" # Default path relative to terraform dir
 }
 
 # --- Environment Variables ---

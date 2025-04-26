@@ -26,3 +26,8 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Terraform generated build artifacts
+terraform/deployment_package.zip
+terraform/python-deps-layer.zip
+terraform/build/
