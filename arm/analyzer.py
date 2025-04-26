@@ -12,7 +12,7 @@ if not ARM_ANALYSIS_LAMBDA_FUNCTION_NAME:
 
 # Initialize Boto3 Lambda client
 try:
-    boto3_session = boto3.Session(profile_name='costnorm')
+    boto3_session = boto3.Session(profile_name='costnorm', region_name='ap-northeast-2')
     lambda_client = boto3_session.client('lambda')
     print("Boto3 Lambda client initialized.")
 except Exception as e:
