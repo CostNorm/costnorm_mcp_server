@@ -100,6 +100,17 @@ terraform apply
 
 성공적으로 완료되면 Terraform은 생성된 리소스에 대한 정보를 출력합니다.
 
+### 3. analyzer.py의 Lambda 함수 이름 업데이트
+
+배포가 성공적으로 완료되면 Terraform은 Lambda 함수 이름을 출력합니다. 이 이름을 `analyzer.py`에 업데이트해야 합니다:
+
+1. `analyzer.py` 파일을 엽니다
+2. Terraform 출력의 Lambda 함수 이름으로 `ARM_ANALYSIS_LAMBDA_FUNCTION_NAME` 변수를 업데이트합니다:
+
+   ```python
+   ARM_ANALYSIS_LAMBDA_FUNCTION_NAME = "arm-compatibility-analyzer"  # Terraform 출력의 Lambda 함수 이름으로 업데이트하세요
+   ```
+
 ## Lambda 함수 호출
 
 Lambda 함수는 `github_url` 매개변수가 포함된 JSON 페이로드를 예상합니다:

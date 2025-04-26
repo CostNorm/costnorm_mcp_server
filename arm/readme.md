@@ -100,6 +100,17 @@ Confirm the apply operation when prompted.
 
 Terraform will output information about the created resources upon successful completion.
 
+### 3. Update Lambda Function Name in analyzer.py
+
+After successful deployment, Terraform will output the Lambda function name. You need to update this name in `analyzer.py`:
+
+1. Open `analyzer.py`
+2. Update the `ARM_ANALYSIS_LAMBDA_FUNCTION_NAME` variable with the Lambda function name from Terraform output:
+
+   ```python
+   ARM_ANALYSIS_LAMBDA_FUNCTION_NAME = "arm-compatibility-analyzer"  # Update this with your Lambda function name
+   ```
+
 ## Invoking the Lambda Function
 
 The Lambda function expects a JSON payload with a `github_url` parameter:
