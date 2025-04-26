@@ -1,0 +1,4 @@
+requests
+packaging
+semver
+python-dotenv

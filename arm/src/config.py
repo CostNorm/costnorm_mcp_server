@@ -1,10 +1,18 @@
 import os
 import logging
-from dotenv import load_dotenv
+import sys
 
-# Load environment variables from .env file if it exists (useful for local development)
-# In AWS Lambda, environment variables are set directly in the function configuration.
-load_dotenv()
+# Detect if running in Lambda environment
+IS_LAMBDA = os.environ.get('AWS_LAMBDA_FUNCTION_NAME') is not None
+
+# Load environment variables from .env file if not in Lambda
+if not IS_LAMBDA:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        print("Loaded environment variables from .env file for local development")
+    except ImportError:
+        print("python-dotenv not installed, using environment variables directly")
 
 # --- Logging Configuration ---
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -23,6 +31,7 @@ formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 logger.info(f"Logging level set to: {LOG_LEVEL}")
+logger.info(f"Running in Lambda environment: {IS_LAMBDA}")
 
 
 # --- GitHub Configuration ---
@@ -33,16 +42,22 @@ if not GITHUB_TOKEN:
     logger.warning(
         "GITHUB_TOKEN environment variable not set. GitHub API rate limits may be encountered."
     )
+else:
+    logger.info("GitHub token found.")
 
 
 # --- Analyzer Configuration ---
+# Helper function to convert string environment variables to boolean
+def get_bool_env_var(var_name: str, default: str = "false") -> bool:
+    return os.environ.get(var_name, default).lower() == "true"
+
 # Control which analysis modules are active. Set environment variables to "true" or "false".
 ENABLED_ANALYZERS = {
-    "terraform": os.environ.get("ENABLE_TERRAFORM_ANALYZER", "False").lower() == "true",
-    "docker": os.environ.get("ENABLE_DOCKER_ANALYZER", "False").lower() == "true",
-    "dependency": os.environ.get("ENABLE_DEPENDENCY_ANALYZER", "True").lower()
-    == "true",
+    "terraform": get_bool_env_var("ENABLE_TERRAFORM_ANALYZER", "False"),
+    "docker": get_bool_env_var("ENABLE_DOCKER_ANALYZER", "False"),
+    "dependency": get_bool_env_var("ENABLE_DEPENDENCY_ANALYZER", "True"),
 }
+logger.info(f"Enabled analyzers: {ENABLED_ANALYZERS}")
 
 
 # --- Docker Hub Configuration (for Manifest Inspection) ---
@@ -60,3 +75,5 @@ if not DOCKERHUB_USERNAME or not DOCKERHUB_PASSWORD:
     logger.warning(
         "DOCKERHUB_USERNAME or DOCKERHUB_PASSWORD not set. Docker manifest inspection will likely fail."
     )
+else:
+    logger.info("Docker Hub credentials found.")

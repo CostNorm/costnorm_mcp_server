@@ -1,0 +1,29 @@
+# Rename this file to terraform.auto.tfvars and fill in your values
+
+# Optional: Specify region if different from default in variables.tf
+# aws_region = "us-west-2"
+
+# Optional: Customize names if needed
+# lambda_function_name = "my-arm-checker"
+# lambda_iam_role_name = "my-arm-checker-role"
+
+# --- Sensitive Environment Variables ---
+dockerhub_username = "YOUR_DOCKERHUB_USERNAME"
+dockerhub_password = "YOUR_DOCKERHUB_PASSWORD_OR_PAT"
+github_token       = "YOUR_GITHUB_TOKEN"
+
+# --- Non-Sensitive Environment Variables ---
+log_level                  = "INFO" # Or "DEBUG"
+enable_terraform_analyzer  = "True" # Example: Enable Terraform
+enable_docker_analyzer     = "True" # Example: Enable Docker
+enable_dependency_analyzer = "True" # Example: Keep Dependency enabled
+
+# Optional: Override other variables like timeout or memory
+# lambda_timeout = 300
+# lambda_memory_size = 2048
+
+# Optional: Override tags
+# tags = {
+#   Environment = "production"
+#   Owner       = "my-team"
+# } 
