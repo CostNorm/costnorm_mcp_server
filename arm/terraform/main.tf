@@ -52,19 +52,23 @@ resource "null_resource" "build_lambda_layer" {
       echo "Building Lambda layer dependencies..."
       export DOCKER_BUILDKIT=1 # Enable BuildKit for potential optimizations/features
 
-      # Define build directory and output zip file path (relative to terraform dir)
-      LAYER_BUILD_DIR="./build/layer"
-      LAYER_ZIP_PATH="./python-deps-layer.zip"
+      # Define build directory and output zip file path with absolute paths
+      CURRENT_DIR=$(pwd)
+      LAYER_BUILD_DIR="$CURRENT_DIR/build/layer"
+      LAYER_ZIP_PATH="$CURRENT_DIR/build/python-deps-layer.zip"
       REQUIREMENTS_PATH="../requirements.txt"
       DOCKERFILE_PATH="./Dockerfile.layer"
 
+      echo "Using build directory: $LAYER_BUILD_DIR"
+      echo "Using zip output path: $LAYER_ZIP_PATH"
+
       # Clean previous build artifacts
-      rm -rf $LAYER_BUILD_DIR
-      rm -f $LAYER_ZIP_PATH
-      mkdir -p $LAYER_BUILD_DIR
+      rm -rf "$LAYER_BUILD_DIR"
+      rm -f "$LAYER_ZIP_PATH"
+      mkdir -p "$LAYER_BUILD_DIR"
 
       # Build the docker image - use --platform if your build host arch != lambda arch
-      docker build --platform linux/arm64 -t lambda-layer-builder:latest -f $DOCKERFILE_PATH ..
+      docker build --platform linux/arm64 -t lambda-layer-builder:latest -f "$DOCKERFILE_PATH" ..
 
       # Create a container from the image
       container_id=$(docker create --platform linux/arm64 lambda-layer-builder:latest)
@@ -75,11 +79,25 @@ resource "null_resource" "build_lambda_layer" {
       # Remove the container
       docker rm -f "$container_id"
 
+      # Debug - check structure of copied files
+      echo "Checking directory structure:"
+      ls -la "$LAYER_BUILD_DIR/"
+
       echo "Zipping layer contents..."
       # Zip the contents *inside* the 'python' directory, not the directory itself
-      (cd "$LAYER_BUILD_DIR/python" && zip -r "../../${LAYER_ZIP_PATH}" .)
+      cd "$LAYER_BUILD_DIR/python" && zip -r "$LAYER_ZIP_PATH" .
+      
+      # Return to original directory
+      cd "$CURRENT_DIR"
 
-      echo "Lambda layer zip created at ${LAYER_ZIP_PATH}"
+      # Verify the zip file was created
+      if [ -f "$LAYER_ZIP_PATH" ]; then
+        echo "Successfully created Lambda layer zip at $LAYER_ZIP_PATH"
+        ls -la "$LAYER_ZIP_PATH"
+      else
+        echo "ERROR: Failed to create zip file at $LAYER_ZIP_PATH"
+        exit 1
+      fi
     EOT
   }
 }
@@ -93,9 +111,18 @@ resource "aws_lambda_layer_version" "python_deps_layer" {
   compatible_runtimes = [var.lambda_runtime]
   compatible_architectures = [var.lambda_architecture]
 
-  # Reference the zip file created by the null_resource
-  filename         = "./python-deps-layer.zip"
-  source_code_hash = filebase64sha256("./python-deps-layer.zip")
+  # Reference the zip file created by the null_resource with absolute path
+  filename         = "${path.module}/build/python-deps-layer.zip"
+  # Use the hash of the requirements file which triggers the build.
+  # This ensures the hash is known during the plan phase and avoids inconsistencies.
+  source_code_hash = null_resource.build_lambda_layer.triggers.requirements_hash
+
+  # Force replacement whenever the build resource is replaced to ensure the new zip is uploaded
+  lifecycle {
+    replace_triggered_by = [
+      null_resource.build_lambda_layer,
+    ]
+  }
 
   # Ensure the layer is created only after the build finishes
   depends_on = [

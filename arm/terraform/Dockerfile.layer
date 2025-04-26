@@ -6,12 +6,12 @@ COPY requirements.txt .
 
 # Create the target directory structure Lambda expects for layers
 # /opt/python/lib/pythonX.Y/site-packages
-RUN mkdir -p /opt/python/lib/python3.13/site-packages
+RUN mkdir -p /opt/python/python
 
 # Install dependencies into the target directory
 RUN pip install \
     --platform manylinux2014_aarch64 \
-    --target /opt/python/lib/python3.13/site-packages \
+    --target /opt/python/python \
     --implementation cp \
     --python-version 3.13 \
     --only-binary=:all: --upgrade \
