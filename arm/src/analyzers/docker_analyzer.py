@@ -643,6 +643,20 @@ class DockerAnalyzer(BaseAnalyzer):
             'recommendations': Actionable advice for ARM migration.
             'reasoning': Supporting details for the recommendations.
         """
+        logger.info(
+            f"Aggregating Docker analysis results from {len(analysis_outputs)} files."
+        )
+
+        # Handle the case where no Dockerfiles were found/analyzed
+        if not analysis_outputs:
+            logger.info("No Dockerfiles found or analyzed. Returning empty aggregation.")
+            return {
+                "results": [],
+                "recommendations": ["No Dockerfiles were analyzed. No Docker-specific actions required."],
+                "reasoning": ["No relevant files (Dockerfiles) were found in the scanned paths."],
+                "overall_potential": "Not Applicable", # Or "High" if absence implies no issues
+            }
+
         image_assessments: List[Dict[str, Any]] = []
         recommendations: List[str] = []
         reasoning: List[str] = []
@@ -653,10 +667,6 @@ class DockerAnalyzer(BaseAnalyzer):
         images_data: Dict[str, Dict[str, Any]] = (
             {}
         )  # { 'image_name': {'files': [], 'platforms_used': set(), manifest_info:{...} }}
-
-        logger.info(
-            f"Aggregating Docker analysis results from {len(analysis_outputs)} files."
-        )
 
         # --- Pass 1: Collect data from all files ---
         for output in analysis_outputs:
