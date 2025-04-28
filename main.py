@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional, Dict, List
 import httpx
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
@@ -11,9 +11,19 @@ import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
 import json
+import asyncio
+import os
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from loguru import logger
+from arm.arm_processor import McpArmProcessor, VMArmProcessor
+from arm.models import ServerClientMessage
+from storage.models import VMSpec
+from storage.ebs.actions.executor import RecommendationExecutor
 
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
+vm_arm = VMArmProcessor() # VM ARM
 
 # Constants
 EXCLUDE_TAG_KEY = "CostNormExclude"
@@ -215,17 +225,215 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     )
 
 
-if __name__ == "__main__":
-    mcp_server = mcp._mcp_server  # noqa: WPS437
+@mcp.tool()
+def get_virtual_machine_spec(instance_id: str) -> Dict[str, str]:
+    """Fetch the specifications of a virtual machine given its instance ID."""
+    # TODO: Implement actual logic to fetch VM specs from cloud provider API
+    # Example dummy implementation
+    logger.info(f"Fetching VM spec for instance ID: {instance_id}")
+    # Simulate API call
+    if instance_id == "i-1234567890abcdef0":
+        spec = VMSpec(instance_id=instance_id, instance_type="t2.micro", region="us-east-1", cpu_cores=1, memory_gb=1)
+    elif instance_id == "i-0987654321fedcba0":
+        spec = VMSpec(instance_id=instance_id, instance_type="m5.large", region="eu-west-1", cpu_cores=2, memory_gb=8)
+    else:
+        # Simulate not found or error
+        return {"error": f"Instance ID {instance_id} not found."}
+    return spec.dict()
 
-    import argparse
+@mcp.tool()
+def list_available_regions() -> list[str]:
+    """List all available AWS regions."""
+    # TODO: Replace with actual logic, e.g., using boto3 to get regions
+    logger.info("Listing available AWS regions")
+    # Dummy data
+    return ["us-east-1", "us-west-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1"]
+
+@mcp.tool()
+def get_current_user_info() -> Dict[str, str]:
+    """Get information about the current user session."""
+    logger.info("Fetching current user info")
+    # Dummy data
+    return {"user_id": "test_user_123", "username": "Test User", "role": "admin", "session_start_time": "2024-01-15T10:00:00Z"}
+
+@mcp.tool()
+async def analyze_ebs_volumes_tool(
+    region: Optional[str] = None,
+    volume_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Analyzes AWS EBS volumes for potential cost optimization opportunities (idleness, overprovisioning).
+
+    Args:
+        region (Optional[str]): The specific AWS region to analyze. If None, analyzes all accessible regions defined in the configuration.
+        volume_id (Optional[str]): The specific EBS volume ID to analyze. If provided, 'region' should also be specified or the system will try to find it (less reliable). If None, analyzes all volumes in the specified or default regions.
+
+    Returns:
+        Dict[str, Any]: A JSON object summarizing the analysis findings. Structure depends on single volume vs all regions.
+                       For a single volume, keys like 'volume_id', 'region', 'is_idle', 'is_overprovisioned', 'recommendation', 'details' are expected.
+                       For all regions, keys like 'summary', 'idle_volumes', 'overprovisioned_volumes', 'errors' are expected.
+                       Returns {'error': 'message'} if analysis fails.
+    """
+    logger.info(f"Placeholder: analyze_ebs_volumes_tool called with region={region}, volume_id={volume_id}")
+    return {"status": "pending implementation"}
+
+@mcp.tool()
+async def execute_ebs_action_tool(
+    volume_id: str,
+    action_type: str,
+    region: Optional[str] = None
+) -> Dict[str, Any]:
+    """Executes a specific optimization action DIRECTLY on an EBS volume.
+
+    Args:
+        volume_id (str): The ID of the EBS volume to take action on.
+        action_type (str): The type of action requested. Initially supported: 'snapshot_only'. Other actions ('snapshot_and_delete', 'change_type', 'resize') might be enabled later but require extreme caution.
+        region (Optional[str]): The AWS region where the volume exists. Required if not easily derivable.
+
+    Returns:
+        Dict[str, Any]: A dictionary indicating the outcome. Expected keys:
+                       'success': True or False.
+                       'message': Description of the result or error.
+                       'details': Optional dictionary with specifics like snapshot ID.
+
+    ** WARNING: This tool executes actions DIRECTLY on AWS resources. **
+    ** Use with extreme caution, especially for destructive actions. **
+    ** Double-check the volume_id and action_type before proceeding. **
+    """
+    logger.info(f"Attempting to execute EBS action: volume_id={volume_id}, action={action_type}, region={region}")
+
+    # Input Validation
+    if not volume_id:
+        logger.error("Volume ID is required for EBS action execution.")
+        return {"success": False, "message": "Error: volume_id parameter is missing."}
+    if not action_type:
+        logger.error("Action type is required for EBS action execution.")
+        return {"success": False, "message": "Error: action_type parameter is missing."}
     
-    parser = argparse.ArgumentParser(description='Run MCP SSE-based server')
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
-    parser.add_argument('--port', type=int, default=8080, help='Port to listen on')
-    args = parser.parse_args()
+    # --- Safety Restriction --- 
+    # TODO: Carefully review and enable other actions after thorough testing and safety checks.
+    # Allowed actions: 'snapshot_and_delete', 'change_type', 'resize'
+    allowed_action = 'snapshot_only'
+    if action_type != allowed_action:
+        logger.warning(f"Direct execution of action_type '{action_type}' is disabled. Only '{allowed_action}' is allowed.")
+        return {
+            "success": False, 
+            "message": f"Error: Direct execution of action_type '{action_type}' is currently disabled for safety. Only '{allowed_action}' is allowed via this tool initially."
+        }
 
-    # Bind SSE request handling to MCP server
-    starlette_app = create_starlette_app(mcp_server, debug=True)
+    # Region is crucial for initializing the executor and potentially describing the volume
+    if not region:
+        # Attempt to get region from config if possible, or return error
+        # For now, require region explicitly for actions
+        # TODO: Implement logic to derive region if not provided (e.g., describe volume across regions - costly)
+        logger.error("Region parameter is required to execute EBS actions.")
+        return {"success": False, "message": "Error: region parameter is missing. It is required for executing actions."}
 
-    uvicorn.run(starlette_app, host=args.host, port=args.port)
+    try:
+        # Initialize the executor for the specified region
+        # Assuming RecommendationExecutor needs region for boto3 client setup
+        logger.info(f"Initializing RecommendationExecutor for region: {region}")
+        executor = RecommendationExecutor(region=region)
+
+        # Prepare minimal volume_info. Executor might need more details internally.
+        # The executor's method should handle fetching more details if needed.
+        volume_info = {
+            'volume_id': volume_id,
+            # Pass region and potentially other context if needed by executor method
+            'region': region 
+        }
+
+        logger.info(f"Executing action '{action_type}' for volume {volume_id} using executor.")
+        
+        # Call the appropriate executor method based on action_type
+        # Currently, only 'snapshot_only' is allowed, which corresponds to execute_idle_volume_recommendation
+        # Note: execute_idle_volume_recommendation is synchronous, run in executor
+        action_result = await asyncio.to_thread(
+            executor.execute_idle_volume_recommendation, 
+            volume_info, 
+            action_type
+        )
+
+        logger.info(f"Action execution result for {volume_id}: {action_result}")
+
+        # Check the result from the executor
+        if isinstance(action_result, dict) and action_result.get('success'):
+            return {
+                "success": True,
+                "message": f"Action '{action_type}' initiated successfully for volume {volume_id}.",
+                "details": action_result.get('details', {})
+            }
+        else:
+            error_message = "Unknown error during action execution."
+            if isinstance(action_result, dict):
+                error_message = action_result.get('details', {}).get('error', error_message)
+                # Include status if available
+                status = action_result.get('status')
+                if status:
+                     error_message = f"{status}: {error_message}"
+
+            logger.error(f"EBS action '{action_type}' failed for volume {volume_id}: {error_message}")
+            return {"success": False, "message": error_message, "details": action_result}
+
+    except Exception as e:
+        logger.error(f"Error executing EBS action '{action_type}' for {volume_id}: {str(e)}", exc_info=True)
+        return {"success": False, "message": f"Error executing EBS action: {str(e)}"}
+    finally:
+        logger.info(f"Finished EBS action execution attempt for volume_id={volume_id}, action={action_type}")
+
+# --- FastAPI App Setup ---
+app = FastAPI()
+
+# Serve static files (like index.html, CSS, JS)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    """Handles WebSocket connections for both MCP and VM ARM clients."""
+    await websocket.accept()
+    logger.info(f"Client {client_id} connected.")
+
+    # Determine if the client is for MCP or VM ARM based on path or initial message (example)
+    # For simplicity, let's assume client_id tells us ('mcp_' prefix for MCP, 'vm_' for VM ARM)
+    # A more robust method would involve an initial handshake message.
+    if client_id.startswith("mcp_"):
+        processor = mcp
+        logger.info(f"Client {client_id} assigned to MCP Processor.")
+    elif client_id.startswith("vm_"):
+        processor = vm_arm
+        logger.info(f"Client {client_id} assigned to VM ARM Processor.")
+    else:
+        logger.warning(f"Client {client_id} has unknown type. Defaulting to MCP.")
+        processor = mcp # Default or raise error
+
+    # Send available tools upon connection
+    await processor.send_available_tools(websocket)
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            logger.debug(f"Received message from {client_id}: {data[:100]}...") # Log truncated message
+            try:
+                message = ServerClientMessage.parse_raw(data)
+                await processor.handle_message(websocket, message)
+            except Exception as e:
+                logger.error(f"Error handling message from {client_id}: {e}", exc_info=True)
+                # Optionally send an error message back to the client
+                await websocket.send_text(ServerClientMessage(message_type="error", payload={"error": str(e)}).json())
+
+    except WebSocketDisconnect:
+        logger.info(f"Client {client_id} disconnected.")
+    except Exception as e:
+        logger.error(f"Unexpected error with client {client_id}: {e}", exc_info=True)
+
+@app.get("/")
+async def get_root():
+    """Serves the main HTML page."""
+    # Example: Redirect to the static index.html or return HTML directly
+    from fastapi.responses import FileResponse
+    return FileResponse('static/index.html')
+
+# --- Application Entry Point ---
+if __name__ == "__main__":
+    logger.add("server.log", rotation="10 MB") # Add file logging
+    logger.info("Starting server...")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
