@@ -11,12 +11,23 @@ import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
 import json
+from unused_resource.lambda_function import lambda_handler
 
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
 
 # Constants
 EXCLUDE_TAG_KEY = "CostNormExclude"
+
+
+@mcp.tool()
+async def cost_analysis() -> dict:
+    """Analyze the cost of the instances in the account"""
+   
+    # Use default session credentials
+    return lambda_handler(None, None)
+
+        
 
 @mcp.tool()
 async def get_instance_info() -> dict:
