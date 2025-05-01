@@ -22,7 +22,13 @@ EXCLUDE_TAG_KEY = "CostNormExclude"
 
 @mcp.tool()
 async def cost_analysis() -> dict:
-    """Analyze the cost of the instances in the account"""
+    """Identified potentially unused resources ARNs and formatted them into a dictionary structure.
+    
+    Returns:
+        dict: A dictionary with keys 'statusCode' and 'body'.
+        'statusCode': The HTTP status code of the response.
+        'body': 'message':A summary of the analysis 'resource_ids_with_cost_yesterday': A list of resource IDs with cost incurred yesterday.
+    """
    
     # Use default session credentials
     return lambda_handler(None, None)
