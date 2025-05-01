@@ -3,3 +3,5 @@ mcp
 fastmcp
 httpx
 boto3
+loguru
+starlette
