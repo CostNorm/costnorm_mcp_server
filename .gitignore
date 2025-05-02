@@ -116,17 +116,17 @@ migrations/
 .aws-sam/
 
 # Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-crash.log
-*.tfvars
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
-.terraform.lock.hcl
+# .terraform/
+# *.tfstate
+# *.tfstate.*
+# crash.log
+# *.tfvars
+# override.tf
+# override.tf.json
+# *_override.tf
+# *_override.tf.json
+# .terraform.lock.hcl
 
 # Lambda zip file
-lambda_function.zip
-costnorm_mcp_server/lambda_ebs_optimizer/lambda_function.zip
+# lambda_function.zip
+# costnorm_mcp_server/lambda_ebs_optimizer/lambda_function.zip
