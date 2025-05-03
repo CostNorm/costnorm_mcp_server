@@ -10,8 +10,7 @@ import uvicorn
 import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
-import json
-from unused_resource.lambda_function import lambda_handler
+from unused_resource.invoke_unused_lambda import invoke_unused_lambda
 
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
@@ -29,9 +28,7 @@ async def cost_analysis() -> dict:
         'statusCode': The HTTP status code of the response.
         'body': 'message':A summary of the analysis 'resource_ids_with_cost_yesterday': A list of resource IDs with cost incurred yesterday.
     """
-   
-    # Use default session credentials
-    return lambda_handler(None, None)
+    return invoke_unused_lambda()
 
         
 
