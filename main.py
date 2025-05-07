@@ -10,7 +10,8 @@ import uvicorn
 import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
-from unused_resource.invoke_unused_lambda import invoke_unused_lambda
+from code.guess_unused_resource.invoke_unused_lambda import invoke_unused_lambda
+from code.detect_unattach_resource.invoke_unattach_lambda import invoke_unattach_lambda
 
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
@@ -20,7 +21,7 @@ EXCLUDE_TAG_KEY = "CostNormExclude"
 
 
 @mcp.tool()
-async def cost_analysis() -> dict:
+async def guess_unused_resource_from_cost() -> dict:
     """Identified potentially unused resources ARNs and formatted them into a dictionary structure.
     
     Returns:
@@ -30,7 +31,32 @@ async def cost_analysis() -> dict:
     """
     return invoke_unused_lambda()
 
+
+@mcp.tool()
+async def get_unattached_resources() -> dict:
+    """Get unattached EIPs and ENIs from all configured AWS regions.
+
+    Invokes a Lambda function that scans specified AWS regions for Elastic IP addresses (EIPs)
+    and Elastic Network Interfaces (ENIs) that are not currently associated with any running
+    resource.
+
+    Returns:
+        dict: A dictionary containing the results of the scan.
+              This nested dictionary maps region names (e.g., "us-east-1") to an object
+              containing two lists: "unused_eips" and "unused_enis".
         
+              {
+                "us-east-1": {
+                "unused_eips": [],
+                "unused_enis": []
+                },
+                "ap-northeast-2": {
+                "unused_eips": [],
+                "unused_enis": []
+                }
+              }
+    """
+    return invoke_unattach_lambda()
 
 @mcp.tool()
 async def get_instance_info() -> dict:

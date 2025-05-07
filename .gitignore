@@ -1,7 +1,7 @@
 **/__pycache__
 
 function.zip
-
+*.zip
 # Local .terraform directories
 .terraform/
 
