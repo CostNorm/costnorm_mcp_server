@@ -230,7 +230,43 @@ async def analyze_ebs_volumes_tool(
     volume_id: Optional[str] = None,
     volume_ids: Optional[List[str]] = None
 ) -> Dict[str, Any]:
-    """Invokes the EBS Optimizer Lambda to analyze EBS volumes."""
+    """Analyzes AWS Elastic Block Store (EBS) volumes in a specified region for potential cost optimization opportunities, specifically checking for idleness and overprovisioning. This tool invokes a separate AWS Lambda function to perform the actual analysis.
+
+    **When to use this tool:**
+    - User explicitly asks to "analyze EBS volumes", "check for unused EBS volumes", "find idle EBS storage", "scan EBS for optimization", or similar requests, specifying a region.
+    - User asks to analyze a *specific* EBS volume ID (e.g., "analyze volume vol-123abc").
+
+    **When NOT to use this tool:**
+    - User asks to *execute* an action (like delete, snapshot, resize) - use 'execute_ebs_action_tool' for that.
+    - User asks about other AWS services like EFS, S3, or EC2 instances (use relevant tools if available).
+    - User asks for general information about EBS pricing or features without requesting analysis of specific resources.
+
+    Args:
+        region (str): The AWS region (e.g., 'us-east-1', 'ap-northeast-2') where the EBS volumes reside. This parameter is REQUIRED.
+        volume_id (Optional[str]): The specific ID of a single EBS volume to analyze (e.g., 'vol-0123456789abcdef0'). If provided, only this volume will be analyzed within the specified region. If omitted, *all* EBS volumes in the specified region will be analyzed. The format must start with 'vol-'.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing the analysis results.
+            - If the analysis was successful (even if no optimizable volumes were found):
+                - 'success': True
+                # Structure for analyzing ALL volumes in a region:
+                - 'summary' (dict): Contains counts like 'total_volumes_analyzed', 'idle_volumes_count', 'overprovisioned_volumes_count'.
+                - 'idle_volumes' (List[dict]): A list of details for volumes identified as idle. Each item includes 'volume_id', 'size', 'reason', 'recommendation', etc. **An empty list means no idle volumes were found.**
+                - 'overprovisioned_volumes' (List[dict]): A list of details for overprovisioned volumes. Each item includes 'volume_id', 'size', 'reason', 'recommendation', 'recommended_size', etc. **An empty list means no overprovisioned volumes were found.**
+                - 'errors' (List[dict]): A list of non-critical errors encountered during the analysis of specific volumes within the region.
+            - If the analysis was successful for a SINGLE volume:
+                - 'success': True
+                - Contains keys like 'volume_id', 'region', 'size', 'volume_type', 'is_idle', 'is_overprovisioned', 'status' ('Idle', 'Overprovisioned', 'Optimized/In-use'), 'recommendation', 'details' (metrics, diagnostics).
+            - If the Lambda invocation or analysis itself failed critically:
+                - 'success': False
+                - 'error': A string describing the error (e.g., "Lambda invocation failed", "Invalid volume ID format", "Region not found").
+                - 'details' (Optional[Any]): Further details about the error if available.
+
+    **Important Notes for LLM:**
+    - An empty list for 'idle_volumes' or 'overprovisioned_volumes' means *none were found*, it does not indicate an error.
+    - Check the 'success' key first. If 'success' is False, report the 'error' message to the user.
+    - The analysis might take some time, especially when scanning all volumes in a region. Inform the user that the process is running.
+    """
     logger.info(f"Invoking EBS analysis Lambda: target_region={region}, volume_id={volume_id}, volume_ids={volume_ids}")
 
     # boto3 클라이언트는 Lambda를 호출하는 주체의 자격증명을 사용합니다.
