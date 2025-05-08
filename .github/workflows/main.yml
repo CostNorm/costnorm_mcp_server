@@ -46,9 +46,9 @@ jobs:
         id: task-def
         run: |
           TASK_DEF_JSON=$(aws ecs describe-task-definition --task-definition costnorm-mcp-server)
-          NEW_TASK_DEF=$(echo "$TASK_DEF_JSON" | jq --arg IMAGE "${{ steps.login-ecr.outputs.registry }}/my-ecr-repo:${{ github.sha }}" \
+          NEW_TASK_DEF=$(echo "$TASK_DEF_JSON" | jq --arg IMAGE "${{ steps.login-ecr.outputs.registry }}/costnorm-mcp-server:${{ github.sha }}" \
             '.taskDefinition | 
-             del(.revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy) |
+             del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy) |
              .containerDefinitions[0].image = $IMAGE')
           echo "$NEW_TASK_DEF" > new-task-def.json
           TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://new-task-def.json | jq -r '.taskDefinition.taskDefinitionArn')
