@@ -10,9 +10,7 @@ import uvicorn
 import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
-from code.guess_unused_resource.invoke_unused_lambda import invoke_unused_lambda
-from code.detect_unattach_resource.invoke_unattach_lambda import invoke_unattach_lambda
-
+import json
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
 
@@ -21,42 +19,60 @@ EXCLUDE_TAG_KEY = "CostNormExclude"
 
 
 @mcp.tool()
-async def guess_unused_resource_from_cost() -> dict:
-    """Identified potentially unused resources ARNs and formatted them into a dictionary structure.
-    
-    Returns:
-        dict: A dictionary with keys 'statusCode' and 'body'.
-        'statusCode': The HTTP status code of the response.
-        'body': 'message':A summary of the analysis 'resource_ids_with_cost_yesterday': A list of resource IDs with cost incurred yesterday.
-    """
-    return invoke_unused_lambda()
+async def analyze_unused_resource() -> dict:
+    """Invokes a Lambda function to identify potentially unused and unattached resources.
 
-
-@mcp.tool()
-async def get_unattached_resources() -> dict:
-    """Get unattached EIPs and ENIs from all configured AWS regions.
-
-    Invokes a Lambda function that scans specified AWS regions for Elastic IP addresses (EIPs)
-    and Elastic Network Interfaces (ENIs) that are not currently associated with any running
-    resource.
+    This tool calls a backend Lambda function that performs two main analyses:
+    1. Detects unattached resources like Elastic IPs (EIPs) and potentially others across regions.
+    2. Identifies resources that might be unused based on cost analysis.
 
     Returns:
-        dict: A dictionary containing the results of the scan.
-              This nested dictionary maps region names (e.g., "us-east-1") to an object
-              containing two lists: "unused_eips" and "unused_enis".
-        
+        dict: A dictionary representing the Lambda function's HTTP-like response.
+              It typically includes the following keys:
+              - "statusCode" (int): The overall HTTP status code of the Lambda invocation.
+              - "headers" (dict): Response headers, commonly including "Content-Type".
+              - "body" (str): A JSON string. When parsed, this string reveals a
+                nested dictionary with the following main keys:
+                - "unattach_id" (dict): Contains information about unattached resources.
+                  - "eips" (dict): Maps region names (e.g., "us-east-1") to a list of
+                    unattached EIP allocation IDs found in that region.
+                  - "enis" (dict): Maps region names (e.g., "us-east-1") to a list of
+                    unattached ENI IDs found in that region.
+                - "unused_id" (dict): Contains results from the cost-based unused resource analysis.
+                  This itself often mirrors a Lambda response structure:
+                  - "statusCode" (int): Status code from the cost analysis part.
+                  - "body" (str): Another JSON string. When parsed, this provides:
+                    - "message" (str): A summary message from the cost analysis (e.g., "No resource IDs to query.").
+                    - "resource_ids_with_cost" (list): A list of resource IDs that incurred costs,
+                      identified by the cost-based analysis.
+
+              Example of a parsed "body" from a successful response:
               {
-                "us-east-1": {
-                "unused_eips": [],
-                "unused_enis": []
+                "unattach_id": {
+                  "eips": {
+                    "us-east-1": ["eipalloc-0af31faca24be4bd1"]
+                  },
+                  "enis": {
+                    "us-east-1": ["eni-0123456789abcdef0"]
+                  }
                 },
-                "ap-northeast-2": {
-                "unused_eips": [],
-                "unused_enis": []
+                "unused_id": {
+                  "statusCode": 200,
+                  "body": {
+                    "message": "No resource IDs to query.",
+                    "resource_ids_with_cost": []
+                  }
                 }
               }
     """
-    return invoke_unattach_lambda()
+    results = boto3.client("lambda", region_name="us-east-1").invoke(
+        FunctionName="unused_resource_tool",
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"operation": "analyze"})
+    )
+    results = json.loads(results["Payload"].read())
+    return results
+
 
 @mcp.tool()
 async def analyze_repo_arm_compatibility(repo_url: str) -> dict:
