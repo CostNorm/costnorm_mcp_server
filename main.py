@@ -340,7 +340,48 @@ async def execute_ebs_action_tool(
     action_type: str,
     region: str, # 액션 대상 리전
 ) -> Dict[str, Any]:
-    """Invokes the EBS Optimizer Lambda to execute an action on an EBS volume."""
+    """Executes a specific action on an AWS Elastic Block Store (EBS) volume by invoking the EBS Optimizer Lambda function.
+
+    **When to use this tool:**
+    - User explicitly requests to perform an action on a specific EBS volume (e.g., "delete volume vol-123abc", "resize volume vol-123abc").
+    - User wants to execute a recommended action from the analysis results of `analyze_ebs_volumes_tool`.
+
+    **When NOT to use this tool:**
+    - User asks to analyze or check EBS volumes (use `analyze_ebs_volumes_tool` instead).
+    - User asks about other AWS services like EFS, S3, or EC2 instances.
+    - User asks for general information about EBS pricing or features.
+
+    **Supported action types:**
+    - "snapshot_only": Creates a snapshot of the EBS volume without any other actions.
+    - "snapshot_and_delete": Creates a snapshot of the EBS volume and then deletes the volume.
+    - "change_type": Changes the EBS volume type (e.g., from gp2 to gp3).
+    - "resize": Resizes the EBS volume to a more appropriate size based on usage patterns.
+    - "change_type_and_resize": Changes both the volume type and size in a single operation.
+
+    Args:
+        volume_id (str): The ID of the EBS volume to act upon (e.g., 'vol-0123456789abcdef0'). Must start with 'vol-'.
+        action_type (str): The type of action to perform. Must be one of: "snapshot_only", "snapshot_and_delete", "change_type", "resize", "change_type_and_resize".
+        region (str): The AWS region (e.g., 'us-east-1', 'ap-northeast-2') where the EBS volume resides.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing the action execution results.
+            - If the action was successful:
+                - 'success': True
+                - 'message': A descriptive message about the action performed
+                - 'details': Additional details about the action (if any)
+            - If the action failed:
+                - 'success': False
+                - 'error': A string describing the error
+                - 'details': Further details about the error (if available)
+
+    **Important Notes for LLM:**
+    - Always verify that the requested action_type is one of the supported types listed above.
+    - For "snapshot_and_delete" actions, ensure the volume is truly idle and not needed before proceeding.
+    - The volume must exist in the specified region.
+    - Some actions may require additional permissions in the Lambda function's IAM role.
+    - Actions like "snapshot_and_delete" are irreversible - use with caution.
+    - Root volumes are protected from certain actions (e.g., deletion, size reduction).
+    """
     logger.info(f"Invoking EBS action Lambda: target_region={region}, volume={volume_id}, action={action_type}")
 
     # lambda_client = boto3.client('lambda', region_name=LAMBDA_DEPLOYMENT_REGION)
