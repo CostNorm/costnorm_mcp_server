@@ -1,5 +1,3 @@
-from typing import Any
-import httpx
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from mcp.server.sse import SseServerTransport
@@ -8,16 +6,69 @@ from starlette.routing import Mount, Route
 from mcp.server import Server
 import uvicorn
 import boto3
-from botocore.exceptions import ClientError
-from datetime import datetime, timedelta, timezone
 import json
-from lambda_invoke import _invoke_network_tool
 
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
 
 # Constants
 EXCLUDE_TAG_KEY = "CostNormExclude"
+
+
+@mcp.tool()
+async def analyze_unused_resource() -> dict:
+    """Invokes a Lambda function to identify potentially unused and unattached resources.
+
+    This tool calls a backend Lambda function that performs two main analyses:
+    1. Detects unattached resources like Elastic IPs (EIPs) and potentially others across regions.
+    2. Identifies resources that might be unused based on cost analysis.
+
+    Returns:
+        dict: A dictionary representing the Lambda function's HTTP-like response.
+              It typically includes the following keys:
+              - "statusCode" (int): The overall HTTP status code of the Lambda invocation.
+              - "headers" (dict): Response headers, commonly including "Content-Type".
+              - "body" (str): A JSON string. When parsed, this string reveals a
+                nested dictionary with the following main keys:
+                - "unattach_id" (dict): Contains information about unattached resources.
+                  - "eips" (dict): Maps region names (e.g., "us-east-1") to a list of
+                    unattached EIP allocation IDs found in that region.
+                  - "enis" (dict): Maps region names (e.g., "us-east-1") to a list of
+                    unattached ENI IDs found in that region.
+                - "unused_id" (dict): Contains results from the cost-based unused resource analysis.
+                  This itself often mirrors a Lambda response structure:
+                  - "statusCode" (int): Status code from the cost analysis part.
+                  - "body" (str): Another JSON string. When parsed, this provides:
+                    - "message" (str): A summary message from the cost analysis (e.g., "No resource IDs to query.").
+                    - "resource_ids_with_cost" (list): A list of resource IDs that incurred costs,
+                      identified by the cost-based analysis.
+
+              Example of a parsed "body" from a successful response:
+              {
+                "unattach_id": {
+                  "eips": {
+                    "us-east-1": ["eipalloc-0af31faca24be4bd1"]
+                  },
+                  "enis": {
+                    "us-east-1": ["eni-0123456789abcdef0"]
+                  }
+                },
+                "unused_id": {
+                  "statusCode": 200,
+                  "body": {
+                    "message": "No resource IDs to query.",
+                    "resource_ids_with_cost": []
+                  }
+                }
+              }
+    """
+    results = boto3.client("lambda", region_name="us-east-1").invoke(
+        FunctionName="unused_resource_tool",
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"operation": "analyze"}),
+    )
+    results = json.loads(results["Payload"].read())
+    return results
 
 
 @mcp.tool()
@@ -47,176 +98,16 @@ async def get_instance_info() -> dict:
 
     Returns:
         dict: A dictionary with keys 'optimizations_needed', 'instances_ok', and 'errors'.
-            'optimizations_needed': List of instances needing scaling adjustments.
-            'instances_ok': List of instances with normal CPU usage.
-            'errors': List of errors encountered during data fetching.
+              'optimizations_needed': List of instances needing scaling adjustments.
+              'instances_ok': List of instances with normal CPU usage.
+              'errors': List of errors encountered during data fetching.
     """
-    # Use default session credentials
-    ec2_client = boto3.client("ec2", region_name="us-east-1")
-    # Initialize result structure
-    results = {"optimizations_needed": [], "instances_ok": [], "errors": []}
-    regions = []
-    now = datetime.now(timezone.utc)
-    start_time = now - timedelta(hours=1)
-
-    # Get available regions
-    try:
-        regions_response = ec2_client.describe_regions()
-        regions = [
-            region["RegionName"] for region in regions_response.get("Regions", [])
-        ]
-    except ClientError as e:
-        results["errors"].append(
-            {"region": "global", "error_message": f"Error fetching AWS regions: {e}"}
-        )
-        return results  # Return early if regions cannot be fetched
-    except Exception as e:
-        results["errors"].append(
-            {
-                "region": "global",
-                "error_message": f"An unexpected error occurred while fetching regions: {e}",
-            }
-        )
-        return results
-
-    if not regions:
-        results["errors"].append(
-            {"region": "global", "error_message": "No accessible AWS regions found."}
-        )
-        return results
-
-    # Iterate through regions and fetch instance data
-    for region in regions:
-        try:
-            regional_ec2_client = boto3.client("ec2", region_name=region)
-            regional_cw_client = boto3.client("cloudwatch", region_name=region)
-            paginator = regional_ec2_client.get_paginator("describe_instances")
-            page_iterator = paginator.paginate(
-                Filters=[{"Name": "instance-state-name", "Values": ["running"]}]
-            )
-
-            for page in page_iterator:
-                for reservation in page.get("Reservations", []):
-                    for instance in reservation.get("Instances", []):
-                        # 추가 시작: 제외 태그 확인
-                        instance_tags = instance.get("Tags", [])
-                        should_exclude = False
-                        for tag in instance_tags:
-                            if tag.get("Key") == EXCLUDE_TAG_KEY:
-                                should_exclude = True
-                                break
-
-                        if should_exclude:
-                            instance_id_for_log = instance.get("InstanceId", "N/A")
-                            print(
-                                f"Excluding instance {instance_id_for_log} due to tag '{EXCLUDE_TAG_KEY}'."
-                            )
-                            continue  # 이 인스턴스 처리 건너뛰기
-                        # 추가 끝
-
-                        instance_id = instance.get("InstanceId", "N/A")
-                        instance_type = instance.get("InstanceType", "N/A")
-                        state = instance.get("State", {}).get("Name", "N/A")
-                        launch_time = instance.get("LaunchTime")
-                        launch_time_str = (
-                            launch_time.isoformat() if launch_time else "N/A"
-                        )  # Use ISO format
-
-                        cpu_avg = None
-                        recommendation = None
-                        cpu_usage_str = (
-                            "N/A"  # For display if needed, not part of core data
-                        )
-
-                        try:
-                            response = regional_cw_client.get_metric_statistics(
-                                Namespace="AWS/EC2",
-                                MetricName="CPUUtilization",
-                                Dimensions=[
-                                    {"Name": "InstanceId", "Value": instance_id}
-                                ],
-                                StartTime=start_time,
-                                EndTime=now,
-                                Period=3600,
-                                Statistics=["Average"],
-                                Unit="Percent",
-                            )
-                            if response["Datapoints"]:
-                                cpu_avg = response["Datapoints"][0]["Average"]
-                                cpu_usage_str = f"{cpu_avg:.1f}%"  # Keep for potential logging/debugging
-
-                                # Determine recommendation
-                                if cpu_avg > 80.0:
-                                    recommendation = "scale_up"
-                                elif cpu_avg < 20.0:
-                                    recommendation = "scale_down"
-                                else:
-                                    recommendation = "ok"
-                            else:
-                                recommendation = "pending_data"
-
-                        except ClientError as cw_error:
-                            print(
-                                f"Could not get CloudWatch metrics for {instance_id} in {region}: {cw_error}"
-                            )
-                            recommendation = "error_fetching_cpu"
-                            results["errors"].append(
-                                {
-                                    "region": region,
-                                    "instance_id": instance_id,
-                                    "error_message": f"CloudWatch ClientError: {cw_error}",
-                                }
-                            )
-                        except Exception as cw_e:
-                            print(
-                                f"Unexpected error getting CloudWatch metrics for {instance_id} in {region}: {cw_e}"
-                            )
-                            recommendation = "error_fetching_cpu"
-                            results["errors"].append(
-                                {
-                                    "region": region,
-                                    "instance_id": instance_id,
-                                    "error_message": f"Unexpected CloudWatch Error: {cw_e}",
-                                }
-                            )
-
-                        # Prepare instance data dictionary
-                        instance_data = {
-                            "region": region,
-                            "instance_id": instance_id,
-                            "instance_type": instance_type,
-                            "metric": "CPUUtilization",
-                            "value": (
-                                f"{round(cpu_avg, 1)}%" if cpu_avg is not None else None
-                            ),
-                            # Include recommendation only if action is needed or ok
-                            # recommendation field will be added when categorizing below
-                        }
-
-                        # Categorize instance
-                        if (
-                            recommendation == "scale_up"
-                            or recommendation == "scale_down"
-                        ):
-                            instance_data["recommendation"] = recommendation
-                            results["optimizations_needed"].append(instance_data)
-                        elif recommendation == "ok":
-                            results["instances_ok"].append(instance_data)
-                        # Instances with pending_data or error_fetching_cpu are implicitly not OK,
-                        # and errors are logged in the errors list.
-
-        except ClientError as e:
-            print(f"Could not access region {region}: {e}")
-            results["errors"].append(
-                {"region": region, "error_message": f"EC2 ClientError: {e}"}
-            )
-            continue
-        except Exception as e:
-            print(f"An unexpected error occurred in region {region}: {e}")
-            results["errors"].append(
-                {"region": region, "error_message": f"Unexpected EC2 Error: {e}"}
-            )
-            continue
+    results = boto3.client("lambda", region_name="us-east-1").invoke(
+        FunctionName="instance_optimize_tool",
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"body": {"tool_name": "get_instance_info"}}),
+    )
+    results = json.loads(results["Payload"].read())
 
     # Return the structured results
     return results
@@ -230,18 +121,21 @@ async def modify_instance_type(instance_id: str, new_type: str) -> str:
         instance_id: The ID of the instance to modify.
         new_type: The target instance type (e.g., t2.medium).
     """
-    # Simulate modifying instance type
-    # In a real scenario, this would involve calling a cloud provider API (e.g., ec2.modify_instance_attribute)
-    # **WARNING**: Directly calling modification APIs can have real cost and operational impact.
-    print(f"Attempting to change instance {instance_id} to type {new_type}...")
-    # Simulate success
-    success = True
-
-    if success:
-        return f"Successfully modified instance {instance_id} to type {new_type}."
-    else:
-        # In a real scenario, you might return specific error details
-        return f"Failed to modify instance {instance_id}."
+    results = boto3.client("lambda", region_name="us-east-1").invoke(
+        FunctionName="instance_optimize_tool",
+        InvocationType="RequestResponse",
+        Payload=json.dumps(
+            {
+                "body": {
+                    "tool_name": "modify_instance_type",
+                    "instance_id": instance_id,
+                    "new_type": new_type,
+                }
+            }
+        ),
+    )
+    results = json.loads(results["Payload"].read())
+    return results
 
 
 @mcp.tool()
