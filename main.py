@@ -1,5 +1,3 @@
-from typing import Any
-import httpx
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from mcp.server.sse import SseServerTransport
@@ -8,9 +6,8 @@ from starlette.routing import Mount, Route
 from mcp.server import Server
 import uvicorn
 import boto3
-from botocore.exceptions import ClientError
-from datetime import datetime, timedelta, timezone
 import json
+
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
 
@@ -68,7 +65,7 @@ async def analyze_unused_resource() -> dict:
     results = boto3.client("lambda", region_name="us-east-1").invoke(
         FunctionName="unused_resource_tool",
         InvocationType="RequestResponse",
-        Payload=json.dumps({"operation": "analyze"})
+        Payload=json.dumps({"operation": "analyze"}),
     )
     results = json.loads(results["Payload"].read())
     return results
@@ -88,14 +85,15 @@ async def analyze_repo_arm_compatibility(repo_url: str) -> dict:
     results = boto3.client("lambda", region_name="ap-northeast-2").invoke(
         FunctionName="arm-compatibility-analyzer",
         InvocationType="RequestResponse",
-        Payload=json.dumps({"github_url": repo_url})
+        Payload=json.dumps({"github_url": repo_url}),
     )
     results = json.loads(results["Payload"].read())
     return results
 
+
 @mcp.tool()
 async def get_instance_info() -> dict:
-    """Get detailed EC2 instance information across regions, including CPU usage 
+    """Get detailed EC2 instance information across regions, including CPU usage
     and optimization recommendations, returned as a JSON object.
 
     Returns:
@@ -107,7 +105,7 @@ async def get_instance_info() -> dict:
     results = boto3.client("lambda", region_name="us-east-1").invoke(
         FunctionName="instance_optimize_tool",
         InvocationType="RequestResponse",
-        Payload=json.dumps({"body": {"tool_name": "get_instance_info"}})
+        Payload=json.dumps({"body": {"tool_name": "get_instance_info"}}),
     )
     results = json.loads(results["Payload"].read())
 
@@ -126,7 +124,40 @@ async def modify_instance_type(instance_id: str, new_type: str) -> str:
     results = boto3.client("lambda", region_name="us-east-1").invoke(
         FunctionName="instance_optimize_tool",
         InvocationType="RequestResponse",
-        Payload=json.dumps({"body": {"tool_name": "modify_instance_type", "instance_id": instance_id, "new_type": new_type}})
+        Payload=json.dumps(
+            {
+                "body": {
+                    "tool_name": "modify_instance_type",
+                    "instance_id": instance_id,
+                    "new_type": new_type,
+                }
+            }
+        ),
+    )
+    results = json.loads(results["Payload"].read())
+    return results
+
+
+@mcp.tool()
+async def analyze_vpc_endpoint_presence(
+    instance_id: str, region: str, days: int = None, hours: int = 1
+) -> dict:
+    """Analyze VPC endpoint usage in a specific region over a given number of days.
+
+    Args:
+
+        region: The AWS region to analyze (e.g., 'us-east-1').
+        days: The number of days to analyze (default is 1).
+    """
+
+    payload = json.dumps(
+        {"instance_id": instance_id, "region": region, "days": days, "hours": hours}
+    )
+
+    results = boto3.client("lambda", region_name="ap-northeast-2").invoke(
+        FunctionName="network_optimize_lambda",
+        InvocationType="RequestResponse",
+        Payload=payload,
     )
     results = json.loads(results["Payload"].read())
     return results
@@ -138,9 +169,9 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
 
     async def handle_sse(request: Request) -> None:
         async with sse.connect_sse(
-                request.scope,
-                request.receive,
-                request._send,  # noqa: SLF001
+            request.scope,
+            request.receive,
+            request._send,  # noqa: SLF001
         ) as (read_stream, write_stream):
             await mcp_server.run(
                 read_stream,
@@ -161,10 +192,10 @@ if __name__ == "__main__":
     mcp_server = mcp._mcp_server  # noqa: WPS437
 
     import argparse
-    
-    parser = argparse.ArgumentParser(description='Run MCP SSE-based server')
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
-    parser.add_argument('--port', type=int, default=8080, help='Port to listen on')
+
+    parser = argparse.ArgumentParser(description="Run MCP SSE-based server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8080, help="Port to listen on")
     args = parser.parse_args()
 
     # Bind SSE request handling to MCP server
