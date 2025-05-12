@@ -11,6 +11,7 @@ import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
 import json
+from lambda_invoke import _invoke_network_tool
 
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
@@ -18,25 +19,22 @@ mcp = FastMCP("instance_manager")
 # Constants
 EXCLUDE_TAG_KEY = "CostNormExclude"
 
+
 @mcp.tool()
 async def get_instance_info() -> dict:
-    """Get detailed EC2 instance information across regions, including CPU usage 
+    """Get detailed EC2 instance information across regions, including CPU usage
     and optimization recommendations, returned as a JSON object.
 
     Returns:
         dict: A dictionary with keys 'optimizations_needed', 'instances_ok', and 'errors'.
-              'optimizations_needed': List of instances needing scaling adjustments.
-              'instances_ok': List of instances with normal CPU usage.
-              'errors': List of errors encountered during data fetching.
+            'optimizations_needed': List of instances needing scaling adjustments.
+            'instances_ok': List of instances with normal CPU usage.
+            'errors': List of errors encountered during data fetching.
     """
     # Use default session credentials
-    ec2_client = boto3.client('ec2', region_name='us-east-1')
+    ec2_client = boto3.client("ec2", region_name="us-east-1")
     # Initialize result structure
-    results = {
-        "optimizations_needed": [],
-        "instances_ok": [],
-        "errors": []
-    }
+    results = {"optimizations_needed": [], "instances_ok": [], "errors": []}
     regions = []
     now = datetime.now(timezone.utc)
     start_time = now - timedelta(hours=1)
@@ -44,70 +42,89 @@ async def get_instance_info() -> dict:
     # Get available regions
     try:
         regions_response = ec2_client.describe_regions()
-        regions = [region['RegionName'] for region in regions_response.get('Regions', [])]
+        regions = [
+            region["RegionName"] for region in regions_response.get("Regions", [])
+        ]
     except ClientError as e:
-        results["errors"].append({"region": "global", "error_message": f"Error fetching AWS regions: {e}"})
-        return results # Return early if regions cannot be fetched
+        results["errors"].append(
+            {"region": "global", "error_message": f"Error fetching AWS regions: {e}"}
+        )
+        return results  # Return early if regions cannot be fetched
     except Exception as e:
-        results["errors"].append({"region": "global", "error_message": f"An unexpected error occurred while fetching regions: {e}"})
+        results["errors"].append(
+            {
+                "region": "global",
+                "error_message": f"An unexpected error occurred while fetching regions: {e}",
+            }
+        )
         return results
 
     if not regions:
-        results["errors"].append({"region": "global", "error_message": "No accessible AWS regions found."})
+        results["errors"].append(
+            {"region": "global", "error_message": "No accessible AWS regions found."}
+        )
         return results
 
     # Iterate through regions and fetch instance data
     for region in regions:
         try:
-            regional_ec2_client = boto3.client('ec2', region_name=region)
-            regional_cw_client = boto3.client('cloudwatch', region_name=region)
-            paginator = regional_ec2_client.get_paginator('describe_instances')
+            regional_ec2_client = boto3.client("ec2", region_name=region)
+            regional_cw_client = boto3.client("cloudwatch", region_name=region)
+            paginator = regional_ec2_client.get_paginator("describe_instances")
             page_iterator = paginator.paginate(
-                Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
+                Filters=[{"Name": "instance-state-name", "Values": ["running"]}]
             )
 
             for page in page_iterator:
-                for reservation in page.get('Reservations', []):
-                    for instance in reservation.get('Instances', []):
+                for reservation in page.get("Reservations", []):
+                    for instance in reservation.get("Instances", []):
                         # 추가 시작: 제외 태그 확인
-                        instance_tags = instance.get('Tags', [])
+                        instance_tags = instance.get("Tags", [])
                         should_exclude = False
                         for tag in instance_tags:
-                            if tag.get('Key') == EXCLUDE_TAG_KEY:
+                            if tag.get("Key") == EXCLUDE_TAG_KEY:
                                 should_exclude = True
                                 break
-                        
+
                         if should_exclude:
-                            instance_id_for_log = instance.get('InstanceId', 'N/A')
-                            print(f"Excluding instance {instance_id_for_log} due to tag '{EXCLUDE_TAG_KEY}'.")
-                            continue # 이 인스턴스 처리 건너뛰기
+                            instance_id_for_log = instance.get("InstanceId", "N/A")
+                            print(
+                                f"Excluding instance {instance_id_for_log} due to tag '{EXCLUDE_TAG_KEY}'."
+                            )
+                            continue  # 이 인스턴스 처리 건너뛰기
                         # 추가 끝
 
-                        instance_id = instance.get('InstanceId', 'N/A')
-                        instance_type = instance.get('InstanceType', 'N/A')
-                        state = instance.get('State', {}).get('Name', 'N/A')
-                        launch_time = instance.get('LaunchTime')
-                        launch_time_str = launch_time.isoformat() if launch_time else 'N/A' # Use ISO format
+                        instance_id = instance.get("InstanceId", "N/A")
+                        instance_type = instance.get("InstanceType", "N/A")
+                        state = instance.get("State", {}).get("Name", "N/A")
+                        launch_time = instance.get("LaunchTime")
+                        launch_time_str = (
+                            launch_time.isoformat() if launch_time else "N/A"
+                        )  # Use ISO format
 
                         cpu_avg = None
                         recommendation = None
-                        cpu_usage_str = 'N/A' # For display if needed, not part of core data
+                        cpu_usage_str = (
+                            "N/A"  # For display if needed, not part of core data
+                        )
 
                         try:
                             response = regional_cw_client.get_metric_statistics(
-                                Namespace='AWS/EC2',
-                                MetricName='CPUUtilization',
-                                Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+                                Namespace="AWS/EC2",
+                                MetricName="CPUUtilization",
+                                Dimensions=[
+                                    {"Name": "InstanceId", "Value": instance_id}
+                                ],
                                 StartTime=start_time,
                                 EndTime=now,
                                 Period=3600,
-                                Statistics=['Average'],
-                                Unit='Percent'
+                                Statistics=["Average"],
+                                Unit="Percent",
                             )
-                            if response['Datapoints']:
-                                cpu_avg = response['Datapoints'][0]['Average']
-                                cpu_usage_str = f"{cpu_avg:.1f}%" # Keep for potential logging/debugging
-                                
+                            if response["Datapoints"]:
+                                cpu_avg = response["Datapoints"][0]["Average"]
+                                cpu_usage_str = f"{cpu_avg:.1f}%"  # Keep for potential logging/debugging
+
                                 # Determine recommendation
                                 if cpu_avg > 80.0:
                                     recommendation = "scale_up"
@@ -117,23 +134,31 @@ async def get_instance_info() -> dict:
                                     recommendation = "ok"
                             else:
                                 recommendation = "pending_data"
-                                
+
                         except ClientError as cw_error:
-                            print(f"Could not get CloudWatch metrics for {instance_id} in {region}: {cw_error}")
+                            print(
+                                f"Could not get CloudWatch metrics for {instance_id} in {region}: {cw_error}"
+                            )
                             recommendation = "error_fetching_cpu"
-                            results["errors"].append({
-                                "region": region,
-                                "instance_id": instance_id,
-                                "error_message": f"CloudWatch ClientError: {cw_error}"
-                            })
+                            results["errors"].append(
+                                {
+                                    "region": region,
+                                    "instance_id": instance_id,
+                                    "error_message": f"CloudWatch ClientError: {cw_error}",
+                                }
+                            )
                         except Exception as cw_e:
-                            print(f"Unexpected error getting CloudWatch metrics for {instance_id} in {region}: {cw_e}")
+                            print(
+                                f"Unexpected error getting CloudWatch metrics for {instance_id} in {region}: {cw_e}"
+                            )
                             recommendation = "error_fetching_cpu"
-                            results["errors"].append({
-                                "region": region,
-                                "instance_id": instance_id,
-                                "error_message": f"Unexpected CloudWatch Error: {cw_e}"
-                            })
+                            results["errors"].append(
+                                {
+                                    "region": region,
+                                    "instance_id": instance_id,
+                                    "error_message": f"Unexpected CloudWatch Error: {cw_e}",
+                                }
+                            )
 
                         # Prepare instance data dictionary
                         instance_data = {
@@ -141,27 +166,36 @@ async def get_instance_info() -> dict:
                             "instance_id": instance_id,
                             "instance_type": instance_type,
                             "metric": "CPUUtilization",
-                            "value": f"{round(cpu_avg, 1)}%" if cpu_avg is not None else None,
+                            "value": (
+                                f"{round(cpu_avg, 1)}%" if cpu_avg is not None else None
+                            ),
                             # Include recommendation only if action is needed or ok
                             # recommendation field will be added when categorizing below
                         }
-                        
+
                         # Categorize instance
-                        if recommendation == "scale_up" or recommendation == "scale_down":
-                             instance_data["recommendation"] = recommendation
-                             results["optimizations_needed"].append(instance_data)
+                        if (
+                            recommendation == "scale_up"
+                            or recommendation == "scale_down"
+                        ):
+                            instance_data["recommendation"] = recommendation
+                            results["optimizations_needed"].append(instance_data)
                         elif recommendation == "ok":
-                             results["instances_ok"].append(instance_data)
+                            results["instances_ok"].append(instance_data)
                         # Instances with pending_data or error_fetching_cpu are implicitly not OK,
                         # and errors are logged in the errors list.
 
         except ClientError as e:
-            print(f"Could not access region {region}: {e}") 
-            results["errors"].append({"region": region, "error_message": f"EC2 ClientError: {e}"})
+            print(f"Could not access region {region}: {e}")
+            results["errors"].append(
+                {"region": region, "error_message": f"EC2 ClientError: {e}"}
+            )
             continue
         except Exception as e:
             print(f"An unexpected error occurred in region {region}: {e}")
-            results["errors"].append({"region": region, "error_message": f"Unexpected EC2 Error: {e}"})
+            results["errors"].append(
+                {"region": region, "error_message": f"Unexpected EC2 Error: {e}"}
+            )
             continue
 
     # Return the structured results
@@ -181,7 +215,7 @@ async def modify_instance_type(instance_id: str, new_type: str) -> str:
     # **WARNING**: Directly calling modification APIs can have real cost and operational impact.
     print(f"Attempting to change instance {instance_id} to type {new_type}...")
     # Simulate success
-    success = True 
+    success = True
 
     if success:
         return f"Successfully modified instance {instance_id} to type {new_type}."
@@ -190,15 +224,29 @@ async def modify_instance_type(instance_id: str, new_type: str) -> str:
         return f"Failed to modify instance {instance_id}."
 
 
+@mcp.tool()
+async def analyze_vpc_endpoint_presence(
+    instance_id: str, region: str, days: int = None, hours: int = 1
+) -> dict:
+    """Analyze VPC endpoint usage in a specific region over a given number of days.
+
+    Args:
+
+        region: The AWS region to analyze (e.g., 'us-east-1').
+        days: The number of days to analyze (default is 1).
+    """
+    return await _invoke_network_tool(instance_id, region, days, hours)
+
+
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
     """Create a Starlette application that can server the provied mcp server with SSE."""
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
         async with sse.connect_sse(
-                request.scope,
-                request.receive,
-                request._send,  # noqa: SLF001
+            request.scope,
+            request.receive,
+            request._send,  # noqa: SLF001
         ) as (read_stream, write_stream):
             await mcp_server.run(
                 read_stream,
@@ -219,10 +267,10 @@ if __name__ == "__main__":
     mcp_server = mcp._mcp_server  # noqa: WPS437
 
     import argparse
-    
-    parser = argparse.ArgumentParser(description='Run MCP SSE-based server')
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
-    parser.add_argument('--port', type=int, default=8080, help='Port to listen on')
+
+    parser = argparse.ArgumentParser(description="Run MCP SSE-based server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8080, help="Port to listen on")
     args = parser.parse_args()
 
     # Bind SSE request handling to MCP server
