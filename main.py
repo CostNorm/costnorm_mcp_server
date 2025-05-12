@@ -21,6 +21,26 @@ EXCLUDE_TAG_KEY = "CostNormExclude"
 
 
 @mcp.tool()
+async def analyze_repo_arm_compatibility(repo_url: str) -> dict:
+    """
+    Analyze the compatibility of a repository with ARM architecture by invoking a Lambda function.
+
+    Args:
+        repo_url: The URL of the GitHub repository to analyze.
+
+    Returns:
+        dict: A dictionary with compatibility analysis results.
+    """
+    results = boto3.client("lambda", region_name="ap-northeast-2").invoke(
+        FunctionName="arm-compatibility-analyzer",
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"github_url": repo_url}),
+    )
+    results = json.loads(results["Payload"].read())
+    return results
+
+
+@mcp.tool()
 async def get_instance_info() -> dict:
     """Get detailed EC2 instance information across regions, including CPU usage
     and optimization recommendations, returned as a JSON object.
