@@ -255,7 +255,18 @@ async def analyze_vpc_endpoint_presence(
         region: The AWS region to analyze (e.g., 'us-east-1').
         days: The number of days to analyze (default is 1).
     """
-    return await _invoke_network_tool(instance_id, region, days, hours)
+
+    payload = json.dumps(
+        {"instance_id": instance_id, "region": region, "days": days, "hours": hours}
+    )
+
+    results = boto3.client("lambda", region_name="ap-northeast-2").invoke(
+        FunctionName="network_optimize_lambda",
+        InvocationType="RequestResponse",
+        Payload=payload,
+    )
+    results = json.loads(results["Payload"].read())
+    return results
 
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
