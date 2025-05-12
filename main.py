@@ -140,14 +140,15 @@ async def modify_instance_type(instance_id: str, new_type: str) -> str:
 
 @mcp.tool()
 async def analyze_vpc_endpoint_presence(
-    instance_id: str, region: str, days: int = None, hours: int = 1
+    instance_id: str, region: str, days: int = 0, hours: int = 1
 ) -> dict:
     """Analyze VPC endpoint usage in a specific region over a given number of days.
 
     Args:
-
+        instance_id: The ID of the instance to analyze.
         region: The AWS region to analyze (e.g., 'us-east-1').
-        days: The number of days to analyze (default is 1).
+        days: The number of days to analyze (default is 0).
+        hours: The number of hours to analyze (default is 1).
     """
 
     payload = json.dumps(
