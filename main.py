@@ -1,4 +1,3 @@
-from typing import Any, Optional, Dict, List
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from mcp.server.sse import SseServerTransport
@@ -12,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import asyncio
 import os
+from typing import Any, Optional, Dict, List
 
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
