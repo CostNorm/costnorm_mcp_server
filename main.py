@@ -16,11 +16,6 @@ mcp = FastMCP("instance_manager")
 
 # Constants
 EXCLUDE_TAG_KEY = "CostNormExclude"
-# 배포된 Lambda 함수 이름 (Terraform 출력 또는 고정값)
-# 실제 환경에서는 Terraform 출력값을 환경 변수 등으로 주입하는 것이 좋음
-EBS_OPTIMIZER_LAMBDA_NAME = "ebs-optimizer-lambda" # Newly deployed Lambda function name
-# Lambda 함수가 실제로 배포된 리전
-LAMBDA_DEPLOYMENT_REGION = "ap-northeast-2" # Region where the Lambda is deployed
 
 
 @mcp.tool()
@@ -240,8 +235,7 @@ async def analyze_ebs_volumes_tool(
     - Check the 'success' key first. If 'success' is False, report the 'error' message to the user.
     - The analysis might take some time, especially when scanning all volumes in a region. Inform the user that the process is running.
     """
-    session = boto3.Session(profile_name='costnorm') # Use 'costnorm' profile
-    lambda_client = session.client('lambda', region_name=LAMBDA_DEPLOYMENT_REGION)
+    lambda_client = boto3.client('lambda', region_name="ap-northeast-2")
 
     payload = {
         "operation": "analyze",
@@ -255,7 +249,7 @@ async def analyze_ebs_volumes_tool(
     try:
         response = await asyncio.to_thread(
             lambda_client.invoke,
-            FunctionName=EBS_OPTIMIZER_LAMBDA_NAME,
+            FunctionName="ebs-optimizer-lambda",
             InvocationType='RequestResponse', # Synchronous invocation
             Payload=json.dumps(payload)
         )
@@ -342,8 +336,7 @@ async def execute_ebs_action_tool(
     - Actions like "snapshot_and_delete" are irreversible - use with caution.
     - Root volumes are protected from certain actions (e.g., deletion, size reduction).
     """
-    session = boto3.Session(profile_name='costnorm') # Use 'costnorm' profile
-    lambda_client = session.client('lambda', region_name=LAMBDA_DEPLOYMENT_REGION)
+    lambda_client = boto3.client('lambda', region_name="ap-northeast-2")
 
     payload = {
         "operation": "execute",
@@ -355,7 +348,7 @@ async def execute_ebs_action_tool(
     try:
         response = await asyncio.to_thread(
             lambda_client.invoke,
-            FunctionName=EBS_OPTIMIZER_LAMBDA_NAME,
+            FunctionName="ebs-optimizer-lambda",
             InvocationType='RequestResponse',
             Payload=json.dumps(payload)
         )
