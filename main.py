@@ -13,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 import json
 import asyncio
 import os
-from loguru import logger
 
 # Initialize FastMCP server for Weather tools (SSE)
 mcp = FastMCP("instance_manager")
@@ -153,13 +152,8 @@ async def analyze_ebs_volumes_tool(
     - Check the 'success' key first. If 'success' is False, report the 'error' message to the user.
     - The analysis might take some time, especially when scanning all volumes in a region. Inform the user that the process is running.
     """
-    logger.info(f"Invoking EBS analysis Lambda: target_region={region}, volume_id={volume_id}, volume_ids={volume_ids}")
-
-    # boto3 클라이언트는 Lambda를 호출하는 주체의 자격증명을 사용합니다.
-    # 필요시 특정 프로필 사용:
     session = boto3.Session(profile_name='costnorm') # Use 'costnorm' profile
     lambda_client = session.client('lambda', region_name=LAMBDA_DEPLOYMENT_REGION)
-    # lambda_client = boto3.client('lambda', region_name=LAMBDA_DEPLOYMENT_REGION) # Default client commented out
 
     payload = {
         "operation": "analyze",
@@ -183,7 +177,6 @@ async def analyze_ebs_volumes_tool(
 
         lambda_status_code = response.get('StatusCode', 200)
         if lambda_status_code != 200:
-            logger.error(f"Lambda function execution error (status: {lambda_status_code}): {response_payload}")
             error_body = response_payload.get('body', json.dumps(response_payload))
             try:
                 parsed_error = json.loads(error_body)
@@ -195,29 +188,22 @@ async def analyze_ebs_volumes_tool(
         if isinstance(response_payload, dict) and 'body' in response_payload:
             try:
                 body_content = json.loads(response_payload['body']) # body가 문자열일 경우 JSON 파싱
-                logger.info(f"Lambda analysis successful. Summary: {body_content.get('summary')}")
                 return body_content
             except (json.JSONDecodeError, TypeError) as e:
-                 logger.error(f"Failed to parse Lambda response body: {e}, Raw body: {response_payload['body']}")
                  # body가 이미 객체일 수 있으므로 그대로 반환 시도
                  if isinstance(response_payload['body'], dict):
                      return response_payload['body']
                  return {"success": False, "error": "Failed to parse Lambda response body", "raw_body": response_payload['body']}
         elif response.get('FunctionError'): # Check for unhandled errors in Lambda
-             logger.error(f"Lambda function returned an error: {response['FunctionError']}, Payload: {response_payload_raw}")
              return {"success": False, "error": f"Lambda function error: {response['FunctionError']}", "details": response_payload_raw}
         else:
-             logger.error(f"Unexpected Lambda response format: {response_payload}")
              return {"success": False, "error": "Unexpected Lambda response format", "details": response_payload}
 
     except ClientError as e:
-        logger.error(f"Failed to invoke Lambda function '{EBS_OPTIMIZER_LAMBDA_NAME}' in {LAMBDA_DEPLOYMENT_REGION}: {e}", exc_info=True)
         return {"success": False, "error": f"Failed to invoke Lambda: {e}"}
     except json.JSONDecodeError as e:
-         logger.error(f"Failed to decode Lambda response: {e}, Raw response: {response_payload_raw}", exc_info=True)
          return {"success": False, "error": f"Failed to decode Lambda response: {e}", "raw_response": response_payload_raw}
     except Exception as e:
-        logger.error(f"Error processing Lambda response: {e}", exc_info=True)
         return {"success": False, "error": f"Error processing Lambda response: {e}"}
 
 @mcp.tool()
@@ -268,9 +254,6 @@ async def execute_ebs_action_tool(
     - Actions like "snapshot_and_delete" are irreversible - use with caution.
     - Root volumes are protected from certain actions (e.g., deletion, size reduction).
     """
-    logger.info(f"Invoking EBS action Lambda: target_region={region}, volume={volume_id}, action={action_type}")
-
-    # lambda_client = boto3.client('lambda', region_name=LAMBDA_DEPLOYMENT_REGION)
     session = boto3.Session(profile_name='costnorm') # Use 'costnorm' profile
     lambda_client = session.client('lambda', region_name=LAMBDA_DEPLOYMENT_REGION)
 
@@ -279,10 +262,6 @@ async def execute_ebs_action_tool(
         "region": region, # 액션 대상 리전
         "volume_id": volume_id,
         "action_type": action_type,
-        # Lambda 함수는 이제 volume_id만 받으면 될 수 있음 (필요시 수정)
-        # "volume_info": {
-        #      "volume_id": volume_id
-        # }
     }
 
     try:
@@ -298,7 +277,6 @@ async def execute_ebs_action_tool(
 
         lambda_status_code = response.get('StatusCode', 200)
         if lambda_status_code != 200:
-            logger.error(f"Lambda function execution error (status: {lambda_status_code}): {response_payload}")
             error_body = response_payload.get('body', json.dumps(response_payload))
             try:
                 parsed_error = json.loads(error_body)
@@ -309,28 +287,21 @@ async def execute_ebs_action_tool(
         if isinstance(response_payload, dict) and 'body' in response_payload:
              try:
                  body_content = json.loads(response_payload['body'])
-                 logger.info(f"Lambda action execution successful for {volume_id}. Result: {body_content}")
                  return body_content
              except (json.JSONDecodeError, TypeError) as e:
-                 logger.error(f"Failed to parse Lambda response body: {e}, Raw body: {response_payload['body']}")
                  if isinstance(response_payload['body'], dict):
                      return response_payload['body']
                  return {"success": False, "error": "Failed to parse Lambda response body", "raw_body": response_payload['body']}
         elif response.get('FunctionError'):
-             logger.error(f"Lambda function returned an error: {response['FunctionError']}, Payload: {response_payload_raw}")
              return {"success": False, "error": f"Lambda function error: {response['FunctionError']}", "details": response_payload_raw}
         else:
-             logger.error(f"Unexpected Lambda response format: {response_payload}")
              return {"success": False, "error": "Unexpected Lambda response format", "details": response_payload}
 
     except ClientError as e:
-        logger.error(f"Failed to invoke Lambda function '{EBS_OPTIMIZER_LAMBDA_NAME}' in {LAMBDA_DEPLOYMENT_REGION}: {e}", exc_info=True)
         return {"success": False, "error": f"Failed to invoke Lambda: {e}"}
     except json.JSONDecodeError as e:
-         logger.error(f"Failed to decode Lambda response: {e}, Raw response: {response_payload_raw}", exc_info=True)
          return {"success": False, "error": f"Failed to decode Lambda response: {e}", "raw_response": response_payload_raw}
     except Exception as e:
-        logger.error(f"Error processing Lambda response: {e}", exc_info=True)
         return {"success": False, "error": f"Error processing Lambda response: {e}"}
 
 # --- End Re-added Tools ---
