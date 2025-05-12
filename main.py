@@ -139,16 +139,58 @@ async def modify_instance_type(instance_id: str, new_type: str) -> str:
 
 
 @mcp.tool()
-async def analyze_vpc_endpoint_presence(
+async def create_vpc_endpoint(
     instance_id: str, region: str, days: int = 0, hours: int = 1
 ) -> dict:
-    """Analyze VPC endpoint usage in a specific region over a given number of days.
+    """
+    Analyzes network traffic for a specified EC2 instance in a given AWS region to identify
+    communications with AWS services (like S3, ECR, etc.) that are not using a VPC endpoint.
+    If such traffic is detected above a certain threshold or based on defined criteria,
+    this tool triggers a backend Lambda function ('network_optimize_lambda') which can
+    analyze the need and potentially create a VPC endpoint for the relevant service(s)
+    to improve security, reduce costs, and enhance performance.
 
     Args:
-        instance_id: The ID of the instance to analyze.
-        region: The AWS region to analyze (e.g., 'us-east-1').
-        days: The number of days to analyze (default is 0).
-        hours: The number of hours to analyze (default is 1).
+        instance_id (str): The ID of the EC2 instance whose network traffic will be analyzed.
+                           This helps focus the analysis on a specific workload.
+        region (str): The AWS region where the instance and target services reside (e.g., 'us-east-1', 'ap-northeast-2').
+                      The analysis and potential endpoint creation will be performed within this region.
+        days (int, optional): The number of past days of network traffic data to analyze by the Lambda function.
+                              Defaults to 0.
+        hours (int, optional): The number of past hours of network traffic data to analyze by the Lambda function.
+                               Defaults to 1. The exact interpretation of days/hours depends on the Lambda logic.
+
+    Returns:
+        dict: A dictionary representing the result from the backend Lambda function.
+              The structure is typically:
+              - "statusCode" (int): The HTTP-like status code returned by the Lambda function execution
+                (e.g., 200 for success).
+              - "body" (list[dict]): A list containing dictionaries, where each dictionary represents the outcome
+                for a specific AWS service analyzed or acted upon. Each dictionary usually contains:
+                - "service" (str): The name of the AWS service (e.g., "S3").
+                - "region" (str): The AWS region where the action occurred.
+                - "status" (str): Indicates the result for this service (e.g., "created", "exists", "not_needed", "error").
+                - "endpoint_id" (str, optional): The ID of the VPC endpoint if it was created or found.
+                - "state" (str, optional): The current state of the endpoint (e.g., "available", "pending") if applicable.
+                - "message" (str, optional): Additional details or error messages related to this service.
+
+              Example of a successful creation response body entry:
+              {
+                'endpoint_id': 'vpce-0cc3e066fce10f7ff',
+                'region': 'ap-northeast-2',
+                'service': 'S3',
+                'state': 'available',
+                'status': 'created'
+              }
+        if status is 'created', it means a VPC endpoint was created. So llm should say that the VPC endpoint was created. Don't give any other information. No other sentences is needed.
+        example output:
+            Action Result:
+                - The status of VPC endpoint for S3 is "created"
+                - The VPC endpoint ID is "vpce-06289e11461ce9745"
+                - The state of the VPC endpoint is "available"
+                VPC endpoint for S3 has been created and is currently being used.
+
+
     """
 
     payload = json.dumps(
@@ -161,6 +203,7 @@ async def analyze_vpc_endpoint_presence(
         Payload=payload,
     )
     results = json.loads(results["Payload"].read())
+    # pprint.pprint(results)
     return results
 
 
