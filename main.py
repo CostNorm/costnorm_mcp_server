@@ -77,13 +77,28 @@ async def analyze_unused_resource() -> dict:
 @mcp.tool()
 async def analyze_repo_arm_compatibility(repo_url: str) -> dict:
     """
-    Analyze the compatibility of a repository with ARM architecture by invoking a Lambda function.
+    Checks if the code in a given GitHub repository is compatible with the ARM64 architecture.
+    category: arm_tools
+
+    **Workflow Context:** This is typically the **first step** when migrating a Lambda function to ARM64. Use this tool to verify if the code has potential ARM compatibility issues. If this tool confirms compatibility, you are authorized to automatically proceed with architecture changes using the `lambda_arch_change` tool without requiring additional user confirmation.
+
+    **When to use:**
+    - User provides a GitHub repository URL and asks to check its ARM compatibility.
+    - User asks to migrate a Lambda function (defined in a repo) to ARM.
+    - When you need to determine if automatic architecture migration to ARM64 is possible.
 
     Args:
-        repo_url: The URL of the GitHub repository to analyze.
+        repo_url (str): The full URL of the public or private GitHub repository to analyze (e.g., 'https://github.com/owner/repo'). Ensure the Lambda function has appropriate access if the repo is private.
 
     Returns:
-        dict: A dictionary with compatibility analysis results.
+        dict: A dictionary containing the analysis results. Key fields include:
+            - 'repository' (str): The 'owner/repo' identifier.
+            - 'github_url' (str): The input URL.
+            - 'analysis_details' (dict): Detailed findings from different analyzers (e.g., dependencies, docker, terraform).
+            - 'overall_compatibility' (str): 'compatible', 'incompatible', or 'unknown'.
+            - 'recommendations' (List[str]): Specific suggestions based on findings.
+            - 'context' (dict): Metadata about the analysis process.
+            - 'error' (str, optional): If the analysis failed, this key will contain an error message.
     """
     results = boto3.client("lambda", region_name="ap-northeast-2").invoke(
         FunctionName="arm-compatibility-analyzer",
@@ -92,6 +107,96 @@ async def analyze_repo_arm_compatibility(repo_url: str) -> dict:
     )
     results = json.loads(results["Payload"].read())
     return results
+
+@mcp.tool()
+async def lambda_search(function_name_query: str, region: Optional[str] = None) -> dict:
+    """
+    Searches for AWS Lambda functions in the account based on a query string. By default, it primarily searches for x86_64 architecture functions.
+    category: arm_tools
+
+    **Workflow Context:** Use this tool as part of the automated ARM64 migration process. After `analyze_repo_arm_compatibility` has confirmed a repository's code is suitable for ARM64, this tool identifies *existing* x86_64 Lambda functions that might correspond to the repository analyzed. The identified functions can then be immediately migrated to ARM64 using the `lambda_arch_change` tool without requiring additional user confirmation.
+
+    **When to use:**
+    - After confirming repo ARM compatibility, to find corresponding Lambda functions in AWS for immediate migration.
+    - When searching for specific Lambda functions by name or related keywords.
+    - As part of a fully automated ARM64 migration workflow.
+
+    Args:
+        function_name_query (str): A search term (e.g., part of a function name, a related keyword). The search performs fuzzy matching against function names, descriptions, and runtimes.
+        region (Optional[str]): The AWS region to search in. If not specified, the default region for the Lambda client is used.
+
+    Returns:
+        dict: A dictionary containing the search results.
+            - 'results' (List[dict]): A list of Lambda functions matching the query. Each function dict includes:
+                - 'FunctionName' (str): The name of the function.
+                - 'Runtime' (str): The function's runtime (e.g., 'python3.13').
+                - 'Architectures' (List[str]): List of architectures (e.g., ['x86_64']).
+                - 'LastModified' (str): Timestamp of the last modification.
+                - 'Description' (str): The function's description.
+            - 'count' (int): The number of functions found.
+            - 'error' (str, optional): If the search Lambda failed.
+    """
+    payload = {
+        "function_name_query": function_name_query
+    }
+    
+    if region:
+        payload["region"] = region
+        
+    results = boto3.client("lambda", region_name="ap-northeast-2").invoke(
+        FunctionName="lambda_search_tool",
+        InvocationType="RequestResponse",
+        Payload=json.dumps(payload),
+    )
+    results = json.loads(results["Payload"].read())
+    return results
+
+@mcp.tool()
+async def lambda_arch_change(function_name: str, target_arch: str) -> dict:
+    """
+    Changes the architecture of a specific, existing AWS Lambda function to the specified target architecture (arm64 or x86_64).
+    category: arm_tools
+
+    **Workflow Context:** This tool has the authority to automatically change Lambda function architectures:
+    - **Migration (x86->ARM):** After identifying a compatible x86_64 Lambda function using `lambda_search` and confirming code compatibility with `analyze_repo_arm_compatibility`, this tool can automatically set `target_arch` to 'arm64'.
+    - **Rollback/Revert (ARM->x86):** Can also revert an arm64 function back to x86_64 if needed, by setting `target_arch` to 'x86_64'.
+
+    **Important:** This tool has been granted full authority to make architecture changes without requiring additional user confirmation. If repository code is determined to be ARM-compatible, you are authorized to proceed with the architecture change immediately.
+
+    Args:
+        function_name (str): The exact name of the existing Lambda function in AWS.
+        target_arch (str): The desired architecture. Must be either "arm64" or "x86_64".
+
+    Returns:
+        dict: A dictionary indicating the outcome of the operation.
+            - 'success' (bool): True if the architecture was updated successfully or was already the target architecture, False otherwise.
+            - 'message' (str): A description of the outcome (e.g., "Function architecture updated to arm64", "Function already uses x86_64", "AWS error: ...").
+            - 'update_response' (dict, optional): The response from the `update_function_configuration` API call if successful.
+            - 'error_code' (str, optional): The AWS error code if an AWS ClientError occurred.
+    """
+    # Basic validation for target_arch
+    if target_arch not in ["arm64", "x86_64"]:
+        return {"success": False, "error": f"Invalid target_arch '{target_arch}'. Must be 'arm64' or 'x86_64'."}
+
+    lambda_client = boto3.client("lambda", region_name="ap-northeast-2")
+    payload = {
+        "function_name": function_name,
+        "target_arch": target_arch # Pass the target architecture
+    }
+    try:
+        response = await asyncio.to_thread(
+            lambda_client.invoke,
+            FunctionName="lambda_architecture_change_tool",
+            InvocationType="RequestResponse",
+            Payload=json.dumps(payload),
+        )
+        response_payload_raw = response['Payload'].read().decode('utf-8')
+        response_payload = json.loads(response_payload_raw)
+        return response_payload
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 
 
 @mcp.tool()

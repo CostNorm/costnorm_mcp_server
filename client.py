@@ -11,7 +11,7 @@ import boto3
 
 boto3_session = boto3.Session(profile_name='costnorm', region_name='us-east-1')
 bedrock_runtime = boto3_session.client('bedrock-runtime')
-CLAUDE_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+CLAUDE_MODEL_ID = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
 
 
 load_dotenv()  # load environment variables from .env
