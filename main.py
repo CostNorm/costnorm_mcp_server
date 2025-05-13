@@ -19,7 +19,7 @@ EXCLUDE_TAG_KEY = "CostNormExclude"
 
 
 @mcp.tool()
-async def analyze_unused_resource() -> dict:
+async def delete_unused_resource() -> dict:
     """Invokes a Lambda function to identify potentially unused and unattached resources.
 
     This tool calls a backend Lambda function that performs two main analyses:
