@@ -151,7 +151,7 @@ async def create_vpc_endpoint(
     If such traffic is detected above a certain threshold or based on defined criteria,
     this tool triggers a backend Lambda function ('network_optimize_lambda') which can
     analyze the need and potentially create a VPC endpoint for the relevant service(s)
-    to improve security, reduce costs, and enhance performance.
+    to improve security, reduce costs, and enhance performance. if user requests to optimize network cost, use this tool.
 
     Args:
         instance_id (str): The ID of the EC2 instance whose network traffic will be analyzed.
@@ -210,37 +210,11 @@ async def create_vpc_endpoint(
     return results
 
 
-def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
-    """Create a Starlette application that can server the provied mcp server with SSE."""
-    sse = SseServerTransport("/messages/")
-
-    async def handle_sse(request: Request) -> None:
-        async with sse.connect_sse(
-            request.scope,
-            request.receive,
-            request._send,  # noqa: SLF001
-        ) as (read_stream, write_stream):
-            await mcp_server.run(
-                read_stream,
-                write_stream,
-                mcp_server.create_initialization_options(),
-            )
-
-    return Starlette(
-        debug=debug,
-        routes=[
-            Route("/sse", endpoint=handle_sse),
-            Mount("/messages/", app=sse.handle_post_message),
-        ],
-    )
-
-# --- Re-added Tools to Invoke EBS Optimizer Lambda --- 
-
 @mcp.tool()
 async def analyze_ebs_volumes_tool(
-    region: str, # 분석 대상 리전
+    region: str,  # 분석 대상 리전
     volume_id: Optional[str] = None,
-    volume_ids: Optional[List[str]] = None
+    volume_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Analyzes AWS Elastic Block Store (EBS) volumes in a specified region for potential cost optimization opportunities, specifically checking for idleness and overprovisioning. This tool invokes a separate AWS Lambda function to perform the actual analysis.
 
@@ -279,11 +253,11 @@ async def analyze_ebs_volumes_tool(
     - Check the 'success' key first. If 'success' is False, report the 'error' message to the user.
     - The analysis might take some time, especially when scanning all volumes in a region. Inform the user that the process is running.
     """
-    lambda_client = boto3.client('lambda', region_name="ap-northeast-2")
+    lambda_client = boto3.client("lambda", region_name="ap-northeast-2")
 
     payload = {
         "operation": "analyze",
-        "region": region, # 분석/액션 대상 리전
+        "region": region,  # 분석/액션 대상 리전
     }
     if volume_ids:
         payload["volume_ids"] = volume_ids
@@ -294,49 +268,76 @@ async def analyze_ebs_volumes_tool(
         response = await asyncio.to_thread(
             lambda_client.invoke,
             FunctionName="ebs-optimizer-lambda",
-            InvocationType='RequestResponse', # Synchronous invocation
-            Payload=json.dumps(payload)
+            InvocationType="RequestResponse",  # Synchronous invocation
+            Payload=json.dumps(payload),
         )
 
-        response_payload_raw = response['Payload'].read().decode('utf-8')
+        response_payload_raw = response["Payload"].read().decode("utf-8")
         response_payload = json.loads(response_payload_raw)
 
-        lambda_status_code = response.get('StatusCode', 200)
+        lambda_status_code = response.get("StatusCode", 200)
         if lambda_status_code != 200:
-            error_body = response_payload.get('body', json.dumps(response_payload))
+            error_body = response_payload.get("body", json.dumps(response_payload))
             try:
                 parsed_error = json.loads(error_body)
-                return {"success": False, "error": f"Lambda execution failed (status {lambda_status_code})", "details": parsed_error}
+                return {
+                    "success": False,
+                    "error": f"Lambda execution failed (status {lambda_status_code})",
+                    "details": parsed_error,
+                }
             except json.JSONDecodeError:
-                 return {"success": False, "error": f"Lambda execution failed (status {lambda_status_code})", "details": error_body}
+                return {
+                    "success": False,
+                    "error": f"Lambda execution failed (status {lambda_status_code})",
+                    "details": error_body,
+                }
 
         # Lambda 함수의 응답 본문(body)을 직접 반환 (이미 JSON 객체로 가정)
-        if isinstance(response_payload, dict) and 'body' in response_payload:
+        if isinstance(response_payload, dict) and "body" in response_payload:
             try:
-                body_content = json.loads(response_payload['body']) # body가 문자열일 경우 JSON 파싱
+                body_content = json.loads(
+                    response_payload["body"]
+                )  # body가 문자열일 경우 JSON 파싱
                 return body_content
             except (json.JSONDecodeError, TypeError) as e:
-                 # body가 이미 객체일 수 있으므로 그대로 반환 시도
-                 if isinstance(response_payload['body'], dict):
-                     return response_payload['body']
-                 return {"success": False, "error": "Failed to parse Lambda response body", "raw_body": response_payload['body']}
-        elif response.get('FunctionError'): # Check for unhandled errors in Lambda
-             return {"success": False, "error": f"Lambda function error: {response['FunctionError']}", "details": response_payload_raw}
+                # body가 이미 객체일 수 있으므로 그대로 반환 시도
+                if isinstance(response_payload["body"], dict):
+                    return response_payload["body"]
+                return {
+                    "success": False,
+                    "error": "Failed to parse Lambda response body",
+                    "raw_body": response_payload["body"],
+                }
+        elif response.get("FunctionError"):  # Check for unhandled errors in Lambda
+            return {
+                "success": False,
+                "error": f"Lambda function error: {response['FunctionError']}",
+                "details": response_payload_raw,
+            }
         else:
-             return {"success": False, "error": "Unexpected Lambda response format", "details": response_payload}
+            return {
+                "success": False,
+                "error": "Unexpected Lambda response format",
+                "details": response_payload,
+            }
 
     except ClientError as e:
         return {"success": False, "error": f"Failed to invoke Lambda: {e}"}
     except json.JSONDecodeError as e:
-         return {"success": False, "error": f"Failed to decode Lambda response: {e}", "raw_response": response_payload_raw}
+        return {
+            "success": False,
+            "error": f"Failed to decode Lambda response: {e}",
+            "raw_response": response_payload_raw,
+        }
     except Exception as e:
         return {"success": False, "error": f"Error processing Lambda response: {e}"}
+
 
 @mcp.tool()
 async def execute_ebs_action_tool(
     volume_id: str,
     action_type: str,
-    region: str, # 액션 대상 리전
+    region: str,  # 액션 대상 리전
 ) -> Dict[str, Any]:
     """Executes a specific action on an AWS Elastic Block Store (EBS) volume by invoking the EBS Optimizer Lambda function.
 
@@ -380,11 +381,11 @@ async def execute_ebs_action_tool(
     - Actions like "snapshot_and_delete" are irreversible - use with caution.
     - Root volumes are protected from certain actions (e.g., deletion, size reduction).
     """
-    lambda_client = boto3.client('lambda', region_name="ap-northeast-2")
+    lambda_client = boto3.client("lambda", region_name="ap-northeast-2")
 
     payload = {
         "operation": "execute",
-        "region": region, # 액션 대상 리전
+        "region": region,  # 액션 대상 리전
         "volume_id": volume_id,
         "action_type": action_type,
     }
@@ -393,43 +394,91 @@ async def execute_ebs_action_tool(
         response = await asyncio.to_thread(
             lambda_client.invoke,
             FunctionName="ebs-optimizer-lambda",
-            InvocationType='RequestResponse',
-            Payload=json.dumps(payload)
+            InvocationType="RequestResponse",
+            Payload=json.dumps(payload),
         )
-        
-        response_payload_raw = response['Payload'].read().decode('utf-8')
+
+        response_payload_raw = response["Payload"].read().decode("utf-8")
         response_payload = json.loads(response_payload_raw)
 
-        lambda_status_code = response.get('StatusCode', 200)
+        lambda_status_code = response.get("StatusCode", 200)
         if lambda_status_code != 200:
-            error_body = response_payload.get('body', json.dumps(response_payload))
+            error_body = response_payload.get("body", json.dumps(response_payload))
             try:
                 parsed_error = json.loads(error_body)
-                return {"success": False, "error": f"Lambda execution failed (status {lambda_status_code})", "details": parsed_error}
+                return {
+                    "success": False,
+                    "error": f"Lambda execution failed (status {lambda_status_code})",
+                    "details": parsed_error,
+                }
             except json.JSONDecodeError:
-                 return {"success": False, "error": f"Lambda execution failed (status {lambda_status_code})", "details": error_body}
+                return {
+                    "success": False,
+                    "error": f"Lambda execution failed (status {lambda_status_code})",
+                    "details": error_body,
+                }
 
-        if isinstance(response_payload, dict) and 'body' in response_payload:
-             try:
-                 body_content = json.loads(response_payload['body'])
-                 return body_content
-             except (json.JSONDecodeError, TypeError) as e:
-                 if isinstance(response_payload['body'], dict):
-                     return response_payload['body']
-                 return {"success": False, "error": "Failed to parse Lambda response body", "raw_body": response_payload['body']}
-        elif response.get('FunctionError'):
-             return {"success": False, "error": f"Lambda function error: {response['FunctionError']}", "details": response_payload_raw}
+        if isinstance(response_payload, dict) and "body" in response_payload:
+            try:
+                body_content = json.loads(response_payload["body"])
+                return body_content
+            except (json.JSONDecodeError, TypeError) as e:
+                if isinstance(response_payload["body"], dict):
+                    return response_payload["body"]
+                return {
+                    "success": False,
+                    "error": "Failed to parse Lambda response body",
+                    "raw_body": response_payload["body"],
+                }
+        elif response.get("FunctionError"):
+            return {
+                "success": False,
+                "error": f"Lambda function error: {response['FunctionError']}",
+                "details": response_payload_raw,
+            }
         else:
-             return {"success": False, "error": "Unexpected Lambda response format", "details": response_payload}
+            return {
+                "success": False,
+                "error": "Unexpected Lambda response format",
+                "details": response_payload,
+            }
 
     except ClientError as e:
         return {"success": False, "error": f"Failed to invoke Lambda: {e}"}
     except json.JSONDecodeError as e:
-         return {"success": False, "error": f"Failed to decode Lambda response: {e}", "raw_response": response_payload_raw}
+        return {
+            "success": False,
+            "error": f"Failed to decode Lambda response: {e}",
+            "raw_response": response_payload_raw,
+        }
     except Exception as e:
         return {"success": False, "error": f"Error processing Lambda response: {e}"}
 
-# --- End Re-added Tools ---
+
+def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
+    """Create a Starlette application that can server the provied mcp server with SSE."""
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request: Request) -> None:
+        async with sse.connect_sse(
+            request.scope,
+            request.receive,
+            request._send,  # noqa: SLF001
+        ) as (read_stream, write_stream):
+            await mcp_server.run(
+                read_stream,
+                write_stream,
+                mcp_server.create_initialization_options(),
+            )
+
+    return Starlette(
+        debug=debug,
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+        ],
+    )
+
 
 if __name__ == "__main__":
     mcp_server = mcp._mcp_server  # noqa: WPS437
