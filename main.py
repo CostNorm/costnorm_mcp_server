@@ -17,9 +17,25 @@ mcp = FastMCP("instance_manager")
 # Constants
 EXCLUDE_TAG_KEY = "CostNormExclude"
 
+@mcp.tool()
+async def delete_unused_resource(arn_id: str, region: str) -> dict:
+    """Delete an unused resource.
+
+    Args:
+        arn_id: The ARN ID of the resource to delete.
+        region: The region of the resource to delete.
+    """
+
+    results = boto3.client("lambda", region_name="us-east-1").invoke(
+        FunctionName="unused_resource_tool",
+        InvocationType="RequestResponse",
+        Payload=json.dumps({"operation": "execute", "arn_id": arn_id, "region": region})
+    )
+    results = json.loads(results["Payload"].read())
+    return results
 
 @mcp.tool()
-async def delete_unused_resource() -> dict:
+async def analyze_unused_resource() -> dict:
     """Invokes a Lambda function to identify potentially unused and unattached resources.
 
     This tool calls a backend Lambda function that performs two main analyses:
