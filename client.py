@@ -78,8 +78,8 @@ CRITICAL INSTRUCTIONS FOR TOOL EXECUTION:
    - Use end_turn: When asking questions, requesting confirmation, or providing information
    
 4. **Example for lambda_arch_change:**
-   - WRONG: Ask "진행해도 될까요?" AND include tool_use in same response
-   - CORRECT: Ask "진행해도 될까요?" with ONLY text, wait for "네" or "예", then execute tool
+   - WRONG: Ask "May I proceed?" AND include tool_use in same response
+   - CORRECT: Ask "May I proceed?" with ONLY text, wait for "yes" or "okay", then execute tool
 
 Remember: If you're asking for permission, you should NOT be calling tools simultaneously."""
             }

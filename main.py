@@ -167,7 +167,7 @@ async def lambda_arch_change(function_name: str, target_arch: str) -> dict:
     3. State the exact input parameters (function_name and target_arch)
     4. Ask for user permission before proceeding
     
-    Example: "ARM 호환성 분석 결과가 양호하여 Lambda 함수의 아키텍처를 변경하겠습니다. lambda_arch_change 도구를 사용하여 function_name='{function_name}', target_arch='arm64'로 실행할 예정입니다. 진행해도 될까요?"
+    Example: "The ARM compatibility analysis result is positive, so I will proceed to change the Lambda function's architecture. I plan to use the lambda_arch_change tool with function_name='{function_name}' and target_arch='arm64'. May I proceed?"
 
     Args:
         function_name (str): The exact name of the existing Lambda function in AWS.
