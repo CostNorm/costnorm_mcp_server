@@ -11,7 +11,7 @@ import boto3
 
 boto3_session = boto3.Session(profile_name='costnorm', region_name='us-east-1')
 bedrock_runtime = boto3_session.client('bedrock-runtime')
-CLAUDE_MODEL_ID = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
 
 load_dotenv()  # load environment variables from .env
@@ -22,6 +22,8 @@ class MCPClient:
         # Initialize session and client objects
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
+        # Add conversation history to maintain chat context
+        self.conversation_history = []
 
     async def connect_to_sse_server(self, server_url: str):
         """Connect to an MCP server running with SSE transport"""
@@ -50,19 +52,46 @@ class MCPClient:
         if self._streams_context:
             await self._streams_context.__aexit__(None, None, None)
 
+    def clear_history(self):
+        """Clear the conversation history"""
+        self.conversation_history = []
+
     async def process_query(self, query: str) -> str:
         """Process a query using Claude and available tools"""
         system_prompt = [
             {
-                "text": "You are a helpful assistant integrated with an MCP system. Use the provided tools ONLY when the user's request clearly and explicitly matches a tool's specific purpose described in its description. For general questions, requests for information not covered by the tools, or greetings, answer directly based on your knowledge without attempting to use any tool."
+                "text": """You are a helpful assistant integrated with an MCP system. Use the provided tools ONLY when the user's request clearly and explicitly matches a tool's specific purpose described in its description. For general questions, requests for information not covered by the tools, or greetings, answer directly based on your knowledge without attempting to use any tool.
+
+CRITICAL INSTRUCTIONS FOR TOOL EXECUTION:
+
+1. **NEVER execute tools that require user confirmation without explicit user approval first**
+   - Tools like `lambda_arch_change` require user permission before execution
+   - When you need to ask for user confirmation, respond with ONLY TEXT (no tool calls)
+   - End your response with stop_reason='end_turn', NOT 'tool_use'
+   
+2. **Two-step process for confirmation-required tools:**
+   - Step 1: Ask user permission using ONLY text response (no tool calls)
+   - Step 2: Wait for user approval, then execute the tool in the next turn
+   
+3. **When to use tool_use vs end_turn:**
+   - Use tool_use: When you have clear permission to execute tools immediately
+   - Use end_turn: When asking questions, requesting confirmation, or providing information
+   
+4. **Example for lambda_arch_change:**
+   - WRONG: Ask "진행해도 될까요?" AND include tool_use in same response
+   - CORRECT: Ask "진행해도 될까요?" with ONLY text, wait for "네" or "예", then execute tool
+
+Remember: If you're asking for permission, you should NOT be calling tools simultaneously."""
             }
         ]
-        messages = [
-            {
-                "role": "user",
-                "content": [{"text": query}]
-            }
-        ]
+        
+        # Use existing conversation history and add new user message
+        messages = self.conversation_history.copy()
+        new_user_message = {
+            "role": "user",
+            "content": [{"text": query}]
+        }
+        messages.append(new_user_message)
 
         response = await self.session.list_tools()
         available_tools = [{
@@ -175,12 +204,15 @@ class MCPClient:
                 if assistant_text_content:
                     final_text.append("\n".join(assistant_text_content))
 
+        # Update conversation history with the complete conversation
+        self.conversation_history = messages
+
         return "\n".join(final_text)
 
     async def chat_loop(self):
         """Run an interactive chat loop"""
         print("\nMCP Client Started!")
-        print("Type your queries or 'quit' to exit.")
+        print("Type your queries, 'clear' to clear history, or 'quit' to exit.")
 
         while True:
             try:
@@ -188,6 +220,10 @@ class MCPClient:
 
                 if query.lower() == 'quit':
                     break
+                elif query.lower() == 'clear':
+                    self.clear_history()
+                    print("Conversation history cleared.")
+                    continue
 
                 response = await self.process_query(query)
                 print("\n" + response)
