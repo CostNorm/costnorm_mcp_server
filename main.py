@@ -109,7 +109,7 @@ async def analyze_repo_arm_compatibility(repo_url: str) -> dict:
     return results
 
 @mcp.tool()
-async def lambda_search(function_name_query: str, region: Optional[str] = None) -> dict:
+async def lambda_search(function_name_query: str, region: Optional[str] = "ap-northeast-2") -> dict:
     """
     Searches for AWS Lambda functions in the account based on a query string. By default, it primarily searches for x86_64 architecture functions.
     category: arm_tools
@@ -123,7 +123,7 @@ async def lambda_search(function_name_query: str, region: Optional[str] = None) 
 
     Args:
         function_name_query (str): A search term (e.g., part of a function name, a related keyword). The search performs fuzzy matching against function names, descriptions, and runtimes.
-        region (Optional[str]): The AWS region to search in. If not specified, the default region for the Lambda client is used.
+        region (Optional[str]): The AWS region to search in. If not specified, the default region for the Lambda client is used. default is ap-northeast-2
 
     Returns:
         dict: A dictionary containing the search results.
@@ -157,11 +157,17 @@ async def lambda_arch_change(function_name: str, target_arch: str) -> dict:
     Changes the architecture of a specific, existing AWS Lambda function to the specified target architecture (arm64 or x86_64).
     category: arm_tools
 
-    **Workflow Context:** This tool has the authority to automatically change Lambda function architectures:
-    - **Migration (x86->ARM):** After identifying a compatible x86_64 Lambda function using `lambda_search` and confirming code compatibility with `analyze_repo_arm_compatibility`, this tool can automatically set `target_arch` to 'arm64'.
+    **Workflow Context:** This tool changes Lambda function architectures:
+    - **Migration (x86->ARM):** After identifying a compatible x86_64 Lambda function using `lambda_search` and confirming code compatibility with `analyze_repo_arm_compatibility`, this tool can set `target_arch` to 'arm64'.
     - **Rollback/Revert (ARM->x86):** Can also revert an arm64 function back to x86_64 if needed, by setting `target_arch` to 'x86_64'.
 
-    **Important:** This tool has been granted full authority to make architecture changes without requiring additional user confirmation. If repository code is determined to be ARM-compatible, you are authorized to proceed with the architecture change immediately.
+    **Important:** This tool requires user confirmation before execution. You must:
+    1. Explain the reason for the architecture change
+    2. Specify which tool will be used (lambda_arch_change)
+    3. State the exact input parameters (function_name and target_arch)
+    4. Ask for user permission before proceeding
+    
+    Example: "The ARM compatibility analysis result is positive, so I will proceed to change the Lambda function's architecture. I plan to use the lambda_arch_change tool with function_name='{function_name}' and target_arch='arm64'. May I proceed?"
 
     Args:
         function_name (str): The exact name of the existing Lambda function in AWS.
